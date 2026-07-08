@@ -1,6 +1,5 @@
-// Copyright (c) FIRST and other WPILib contributors.
-// Open Source Software; you can modify and/or share it under the terms of
-// the WPILib BSD license file in the root directory of this project.
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
 
 package yams.telemetry;
 
@@ -9,15 +8,39 @@ import edu.wpi.first.networktables.BooleanSubscriber;
 import edu.wpi.first.networktables.BooleanTopic;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.PubSub;
+import edu.wpi.first.util.datalog.BooleanLogEntry;
+import edu.wpi.first.wpilibj.DataLogManager;
+import edu.wpi.first.wpilibj.Timer;
 import java.util.Optional;
 import yams.telemetry.SmartMotorControllerTelemetry.BooleanTelemetryField;
 
 /**
  * Boolean Telemetry for SmartMotorControllers.
+ *
+ * <p>A lightweight wrapper that publishes a single {@code boolean} value to NetworkTables and/or
+ * a WPILib DataLog. It is used internally by {@link SmartMotorControllerTelemetry} to track
+ * flags such as limit-switch states, active feedforward type, and motor inversion — but it can
+ * also be constructed directly when you need a standalone boolean entry.
+ *
+ * <h2>Example</h2>
+ * <pre>{@code
+ * // Create and publish a boolean entry for "at speed" under the Shooter table.
+ * BooleanTelemetry atSpeed = new BooleanTelemetry(
+ *     "atSpeed",                                        // NetworkTables key
+ *     false,                                            // default value
+ *     SmartMotorControllerTelemetry.BooleanTelemetryField.VelocityControl,
+ *     false);                                           // not tunable
+ *
+ * NetworkTable shooterTable = NetworkTableInstance.getDefault().getTable("Shooter");
+ * atSpeed.enable();
+ * atSpeed.setupNetworkTable(shooterTable);
+ *
+ * // In periodic:
+ * atSpeed.set(shooter.isAtSpeed());
+ * }</pre>
  */
 public class BooleanTelemetry
 {
-
   /**
    * Field representing.
    */
@@ -33,7 +56,7 @@ public class BooleanTelemetry
   /**
    * Enabled?
    */
-  protected     boolean                     enabled     = false;
+  protected boolean                     enabled      = false;
   /**
    * Default value.
    */
@@ -45,27 +68,31 @@ public class BooleanTelemetry
   /**
    * Publisher.
    */
-  private       BooleanPublisher            publisher   = null;
+  private   BooleanPublisher            publisher    = null;
   /**
    * Subscriber.
    */
-  private       Optional<BooleanSubscriber> subscriber  = Optional.empty();
+  private   Optional<BooleanSubscriber> subscriber   = Optional.empty();
   /**
    * Sub publisher.
    */
-  private       BooleanPublisher            pubSub      = null;
+  private   BooleanPublisher            pubSub       = null;
   /**
    * pub or sub topic.
    */
   private       BooleanTopic                topic;
   /**
+   * DataLog entry.
+   */
+  private   Optional<BooleanLogEntry>   dataLogEntry = Optional.empty();
+  /**
    * Tuning table
    */
-  private       Optional<NetworkTable>      tuningTable = Optional.empty();
+  private   Optional<NetworkTable>      tuningTable  = Optional.empty();
   /**
    * Data table.
    */
-  private       Optional<NetworkTable>      dataTable   = Optional.empty();
+  private   Optional<NetworkTable>      dataTable    = Optional.empty();
 
   /**
    * Setup boolean telemetry for a field.
@@ -109,6 +136,24 @@ public class BooleanTelemetry
   }
 
   /**
+   * Setup the DataLog entry for this telemetry field.
+   *
+   * @param prefix Prefix of the entry.
+   */
+  public void setupDataLog(String prefix)
+  {
+    if (!tunable)
+    {
+      if (!prefix.endsWith("/"))
+      {prefix += "/";}
+      dataLogEntry = Optional.of(new BooleanLogEntry(DataLogManager.getLog(),
+                                                     prefix + key,
+                                                     (long) Timer.getFPGATimestamp()));
+    }
+  }
+
+
+  /**
    * Setup network tables.
    *
    * @param dataTable Data tables.
@@ -126,6 +171,8 @@ public class BooleanTelemetry
    */
   public boolean set(boolean value)
   {
+    if (dataLogEntry.isPresent())
+    {dataLogEntry.get().append(value);}
     if (subscriber.isPresent())
     {
       boolean tuningValue = subscriber.get().get(defaultValue);

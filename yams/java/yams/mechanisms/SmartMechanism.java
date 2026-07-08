@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms;
 
 import edu.wpi.first.math.geometry.Translation3d;
@@ -12,18 +15,57 @@ import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.Subsystem;
 import java.util.Optional;
 import java.util.function.Supplier;
-import yams.gearing.GearBox;
-import yams.gearing.MechanismGearing;
-import yams.gearing.Sprocket;
 import yams.motorcontrollers.SmartMotorController;
 import yams.telemetry.MechanismTelemetry;
 
 /**
  * Generic implementation of a mechanism with advanced telemetry.
+ *
+ * <p>
+ * {@code SmartMechanism} is the abstract root of all YAMS mechanism implementations. It combines a
+ * {@link yams.motorcontrollers.SmartMotorController} with integrated telemetry, simulation support,
+ * and WPILib {@link edu.wpi.first.wpilibj2.command.Command} / {@link edu.wpi.first.wpilibj2.command.button.Trigger}
+ * integration so that every concrete mechanism (Arm, Elevator, Flywheel, etc.) shares a consistent
+ * API for control, feedback, and visualization.
+ * </p>
+ *
+ * <h2>Mechanism Lifecycle</h2>
+ * <ol>
+ *   <li>Configure a motor controller: {@link yams.motorcontrollers.SmartMotorControllerConfig}</li>
+ *   <li>Instantiate the appropriate wrapper: {@link yams.motorcontrollers.local.SparkWrapper} (REV), {@link yams.motorcontrollers.remote.TalonFXWrapper} or {@link yams.motorcontrollers.remote.TalonFXSWrapper} (CTRE)</li>
+ *   <li>Build a mechanism config (e.g., {@link yams.mechanisms.config.ArmConfig})</li>
+ *   <li>Construct the concrete mechanism (e.g., {@link yams.mechanisms.positional.Arm})</li>
+ *   <li>Schedule setpoint commands and bind triggers</li>
+ * </ol>
+ *
+ * <p>
+ * <b>Periodic calls required:</b> {@link #simIterate()}, {@link #updateTelemetry()}, and
+ * {@link #visualizationUpdate()} must be called periodically — typically from
+ * {@code robotPeriodic()} — so that simulation state, telemetry, and the {@link edu.wpi.first.wpilibj.smartdashboard.Mechanism2d}
+ * visualization remain up to date.
+ * </p>
+ *
+ * <h2>Example</h2>
+ * <pre>{@code
+ * // 1. Motor config
+ * SmartMotorControllerConfig motorConfig = new SmartMotorControllerConfig()
+ *     .withClosedLoopController(0.2,0,0).withFeedforward(new ArmFeedforawrd(0.05,0,0)).withStatorCurrentLimit(Amps.of(40));
+ * // 2. Motor
+ * SmartMotorController motor = new SparkWrapper(
+ *     new SparkMax(1, MotorType.kBrushless), DCMotor.getNEO(1), motorConfig);
+ * // 3. Mechanism config + 4. Mechanism
+ * Arm arm = new Arm(new ArmConfig(motor).withLength(Meters.of(0.5)));
+ * // 5. Schedule a command (in a subsystem or robot container)
+ * arm.setAngle(Degrees.of(45));
+ * // 5. Bind a trigger
+ * arm.isNear(Degrees.of(45), Degrees.of(2)).onTrue(Commands.print("At target!"));
+ * // Call in robotPeriodic():
+ * arm.simIterate();
+ * arm.updateTelemetry();
+ * }</pre>
  */
 public abstract class SmartMechanism
 {
-
   /**
    * Subsystem for the Mechanism.
    */
@@ -42,88 +84,7 @@ public abstract class SmartMechanism
   protected Mechanism2d m_mechanismWindow;
 
   /**
-   * Create the {@link Sprocket} class easily for use within the mechanism.
-   *
-   * @param sprocketReductionStages Teeth of each sprocket in the chain, in the format of "IN:OUT" => IN/OUT.
-   * @return {@link Sprocket} representing the sprocketReductionStages given.
-   * @deprecated Use {@link Sprocket#fromStages(String...)} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static Sprocket sprocket(double... sprocketReductionStages)
-  {
-    return new Sprocket(sprocketReductionStages);
-  }
-
-  /**
-   * Create the {@link Sprocket} class easily for use within the mechanism.
-   *
-   * @param sprocketReductionStages Teeth of each sprocket in the chain in the format of "IN:OUT".
-   * @return {@link Sprocket} representing the sprocketReductionStages given.
-   * @deprecated Use {@link Sprocket#fromStages(String...)} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static Sprocket sprocket(String... sprocketReductionStages)
-  {
-    return new Sprocket(sprocketReductionStages);
-  }
-
-
-  /**
-   * Create the {@link GearBox} for {@link MechanismGearing}
-   *
-   * @param reductionStages Reduction stages in the gear box in the format of "IN:OUT"
-   * @return {@link GearBox} for use in {@link MechanismGearing};
-   * @deprecated Use {@link GearBox#fromStages(String...)} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static GearBox gearbox(String... reductionStages)
-  {
-    return new GearBox(reductionStages);
-  }
-
-
-  /**
-   * Create the {@link GearBox} for {@link MechanismGearing}.
-   *
-   * @param reductionStages Reduction stages in the gear box, where "IN:OUT" => IN/OUT.
-   * @return {@link GearBox} for use in {@link MechanismGearing};
-   * @deprecated Use {@link GearBox#fromReductionStages(double...)} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static GearBox gearbox(double... reductionStages)
-  {
-    return new GearBox(reductionStages);
-  }
-
-  /**
-   * Create {@link MechanismGearing} with the given {@link GearBox} and {@link Sprocket}
-   *
-   * @param gearBox  {@link GearBox} created using {@link SmartMechanism#gearbox(double...)}.
-   * @param sprocket {@link Sprocket} created using {@link SmartMechanism#sprocket(double...)}.
-   * @return {@link MechanismGearing} with the {@link GearBox} and {@link Sprocket}.
-   * @deprecated Use {@link MechanismGearing#MechanismGearing(GearBox, Sprocket)} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static MechanismGearing gearing(GearBox gearBox, Sprocket sprocket)
-  {
-    return new MechanismGearing(gearBox, sprocket);
-  }
-
-  /**
-   * Create {@link MechanismGearing} with the given {@link GearBox}.
-   *
-   * @param gearBox {@link GearBox} created using {@link SmartMechanism#gearbox(double...)}.
-   * @return {@link MechanismGearing} with the {@link GearBox}.
-   * @deprecated Use {@link MechanismGearing} instead.
-   */
-  @Deprecated(forRemoval = true)
-  public static MechanismGearing gearing(GearBox gearBox)
-  {
-    return new MechanismGearing(gearBox);
-  }
-
-  /**
-   * Set the DutyCycle of the {@link yams.motorcontrollers.SmartMotorController}.
+   * Set the DutyCycle of the {@link SmartMotorController}.
    *
    * @param dutycycle [-1,1] to set.
    * @return {@link Command}
@@ -136,7 +97,7 @@ public abstract class SmartMechanism
   }
 
   /**
-   * Set the DutyCycle of the {@link yams.motorcontrollers.SmartMotorController}.
+   * Set the DutyCycle of the {@link SmartMotorController}.
    *
    * @param dutycycle [-1,1] to set via an {@link Supplier}.
    * @return {@link Command}
@@ -150,9 +111,9 @@ public abstract class SmartMechanism
   }
 
   /**
-   * Set the voltage of the {@link yams.motorcontrollers.SmartMotorController}.
+   * Set the voltage of the {@link SmartMotorController}.
    *
-   * @param volts {@link Voltage} of the {@link yams.motorcontrollers.SmartMotorController} to set.
+   * @param volts {@link Voltage} of the {@link SmartMotorController} to set.
    * @return {@link Command}
    */
   public Command setVoltage(Voltage volts)
@@ -163,9 +124,9 @@ public abstract class SmartMechanism
   }
 
   /**
-   * Set the voltage of the {@link yams.motorcontrollers.SmartMotorController}.
+   * Set the voltage of the {@link SmartMotorController}.
    *
-   * @param volts {@link Voltage} of the {@link yams.motorcontrollers.SmartMotorController} to set, via a
+   * @param volts {@link Voltage} of the {@link SmartMotorController} to set, via a
    *              {@link Supplier}.
    * @return {@link Command}
    */

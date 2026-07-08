@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.swerve.utility;
 
 import static edu.wpi.first.units.Units.Centimeters;
@@ -18,7 +21,6 @@ import edu.wpi.first.math.geometry.Transform2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.numbers.N2;
-import edu.wpi.first.math.trajectory.TrapezoidProfile.State;
 import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.Distance;
 import edu.wpi.first.units.measure.LinearVelocity;
@@ -55,10 +57,45 @@ import yams.mechanisms.swerve.SwerveDrive;
  *                                                            .headingWhile(true); // Enable heading based control.
  * }
  * </pre>
+ *
+ * <h2>Joystick-to-{@link yams.mechanisms.swerve.SwerveDrive} adapter</h2>
+ * <p>
+ * {@link SwerveInputStream} acts as a bridge between raw controller axis values (in the range
+ * {@code [-1, 1]}) and the {@link ChassisSpeeds} that {@link yams.mechanisms.swerve.SwerveDrive}
+ * expects.  It handles deadbands, axis scaling, non-linear (cubed) response curves, field-relative
+ * / alliance-relative flipping, and multiple drive modes (angular-velocity, heading-snap,
+ * translation-only, aim-at-target, drive-to-pose).  Because it implements
+ * {@link java.util.function.Supplier}{@code <}{@link ChassisSpeeds}{@code >} it can be passed
+ * directly to a command that calls {@code swerveDrive.drive(inputStream.get())}.
+ * </p>
+ *
+ * <h2>Typical usage with an {@link XboxController}</h2>
+ * <pre>{@code
+ * XboxController driver = new XboxController(0);
+ *
+ * // Angular-velocity stream: left stick translates, right stick X rotates
+ * SwerveInputStream angularVelocityStream =
+ *     SwerveInputStream.of(swerveDrive,
+ *                          () -> -driver.getLeftY(),   // forward/back
+ *                          () -> -driver.getLeftX())   // strafe
+ *                      .withControllerRotationAxis(driver::getRightX)
+ *                      .withDeadband(0.05)
+ *                      .withScaleTranslation(0.8)
+ *                      .withScaleRotation(0.6)
+ *                      .withAllianceRelativeControl()  // auto-flip for Red alliance
+ *                      .withCubeTranslationControllerAxis(); // non-linear response
+ *
+ * // Heading-snap variant: right stick X/Y picks a desired heading angle
+ * SwerveInputStream headingStream = angularVelocityStream.clone()
+ *     .withControllerHeadingAxis(driver::getRightX, driver::getRightY)
+ *     .withHeadingControl(() -> driver.getRightStickButton());
+ *
+ * // In your periodic or a command, call .get() to obtain ChassisSpeeds:
+ * swerveDrive.drive(angularVelocityStream.get());
+ * }</pre>
  */
 public class SwerveInputStream implements Supplier<ChassisSpeeds>
 {
-
   /**
    * Translation suppliers.
    */
@@ -68,7 +105,7 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
    */
   private final DoubleSupplier                  controllerTranslationY;
   /**
-   * {@link yams.mechanisms.swerve.SwerveDrive} object for transformations.
+   * {@link SwerveDrive} object for transformations.
    */
   private final SwerveDrive                     swerveDrive;
   /**
@@ -98,7 +135,7 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
   /**
    * Target to aim at.
    */
-  private       Optional<Pose2d>                aimTarget                           = Optional.empty();
+  private       Optional<Supplier<Pose2d>>                aimTarget                           = Optional.empty();
   /**
    * Target {@link Supplier<Pose2d>} to drive towards when driveToPose is enabled.
    */
@@ -324,61 +361,6 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
 
 
   /**
-   * Drive to a given pose with the provided {@link ProfiledPIDController}s
-   *
-   * @param pose               {@link Supplier<Pose2d>} for ease of use.
-   * @param xPIDController     PID controller for the translational axis, units are m/s.
-   * @param omegaPIDController PID Controller for rotational axis, units are rad/s.
-   * @return self
-   */
-  @Deprecated(since = "2025.10.31", forRemoval = true)
-  public SwerveInputStream driveToPose(Supplier<Pose2d> pose, ProfiledPIDController xPIDController,
-                                       ProfiledPIDController omegaPIDController)
-  {
-    omegaPIDController.reset(swerveDrive.getPose().getRotation().getRadians());
-    xPIDController.reset(swerveDrive.getPose().getTranslation().getDistance(pose.get().getTranslation()));
-    omegaPIDController.enableContinuousInput(-Math.PI, Math.PI);
-    xPIDController.setGoal(new State(0, 0));
-    driveToPose = Optional.of(pose);
-    driveToPoseTranslationPIDController = Optional.of(xPIDController);
-    driveToPoseOmegaPIDController = Optional.of(omegaPIDController);
-    return this;
-  }
-
-
-  /**
-   * Enable driving to the target pose.
-   *
-   * @param enabled Enable state of drive to pose.
-   * @return self.
-   */
-  @Deprecated(since = "2025.10.31", forRemoval = true)
-  public SwerveInputStream driveToPoseEnabled(BooleanSupplier enabled)
-  {
-    driveToPoseEnabled = Optional.of(enabled);
-    return this;
-  }
-
-  /**
-   * Enable driving to the target pose.
-   *
-   * @param enabled Enable state of drive to pose.
-   * @return self.
-   */
-  @Deprecated(since = "2025.10.31", forRemoval = true)
-  public SwerveInputStream driveToPoseEnabled(boolean enabled)
-  {
-    driveToPoseEnabled = enabled ? Optional.of(() -> enabled) : Optional.empty();
-    Pose2d swervePose = swerveDrive.getPose();
-//    driveToPoseXPIDController.ifPresent(profiledPIDController -> profiledPIDController.reset(swervePose.getX()));
-//    driveToPoseYPIDController.ifPresent(profiledPIDController -> profiledPIDController.reset(swervePose.getY()));
-//    driveToPoseOmegaPIDController.ifPresent(profiledPIDController -> profiledPIDController.reset(swervePose.getRotation()
-//                                                                                                           .getRadians()));
-    return this;
-  }
-
-
-  /**
    * Heading offset enabled boolean supplier.
    *
    * @param angle {@link Rotation2d} offset to apply
@@ -563,7 +545,7 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
    * @param aimTarget {@link Pose2d} to point at.
    * @return this
    */
-  public SwerveInputStream withAim(Pose2d aimTarget, BooleanSupplier trigger)
+  public SwerveInputStream withAim(Supplier<Pose2d> aimTarget, BooleanSupplier trigger)
   {
     this.aimTarget = aimTarget.equals(Pose2d.kZero) ? Optional.empty() : Optional.of(aimTarget);
     aimEnabled = Optional.of(trigger);
@@ -584,50 +566,19 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
 
 
   /**
-   * Reset the drive to pose PID controllers when switching targets.
-   */
-  @Deprecated(since = "2025.10.31", forRemoval = true)
-  public void resetDriveToPosePIDControllers()
-  {
-    driveToPoseOmegaPIDController.ifPresent(pid -> pid.reset(swerveDrive.getPose().getRotation().getRadians()));
-    driveToPoseTranslationPIDController.ifPresent(pid -> pid.reset(driveToPoseDistance().in(Meters)));
-  }
-
-  /**
-   * Get the drive to pose translation distance between the current pose and the target pose.
-   *
-   * @return {@link Distance} in meters between the current pose and the target pose.
-   */
-  @Deprecated(since = "2025.10.31", forRemoval = true)
-  private Distance driveToPoseDistance()
-  {
-    Pose2d swervePoseSetpoint = driveToPose.orElse(swerveDrive::getPose).get();
-    return swerveDrive.getDistanceFromPose(swervePoseSetpoint);
-  }
-
-  /**
-   * Get the drive to pose {@link Rotation2d} between the current pose and the target pose.
-   *
-   * @return Difference between the target pose and the current pose {@link Rotation2d} in radians..
-   */
-  @Deprecated(since = "2025.10.31", forRemoval = true)
-  private Rotation2d driveToPoseRotation()
-  {
-    Pose2d swervePoseSetpoint = driveToPose.orElse(swerveDrive::getPose).get();
-    Pose2d robotPose          = swerveDrive.getPose();
-    return swervePoseSetpoint.getRotation().minus(robotPose.getRotation());
-  }
-
-  /**
    * Find {@link SwerveInputMode} based off existing parameters of the {@link SwerveInputStream}
    *
    * @return The calculated {@link SwerveInputMode}, defaults to {@link SwerveInputMode#ANGULAR_VELOCITY}.
    */
   private SwerveInputMode findMode()
   {
-    if (driveToPoseEnabled.isPresent() && driveToPoseEnabled.get().getAsBoolean() && driveToPoseDistance().lte(
+    Pose2d   driveToPosePose     = driveToPose.orElse(swerveDrive::getPose).get();
+    Distance driveToPoseDist     = swerveDrive.getDistanceFromPose(driveToPosePose);
+    Pose2d   robotPoseForMode    = swerveDrive.getPose();
+    Rotation2d driveToPoseRot   = driveToPosePose.getRotation().minus(robotPoseForMode.getRotation());
+    if (driveToPoseEnabled.isPresent() && driveToPoseEnabled.get().getAsBoolean() && driveToPoseDist.lte(
         Centimeters.of(1)) &&
-        driveToPoseRotation().getMeasure().lte(Degrees.of(1)))
+        driveToPoseRot.getMeasure().lte(Degrees.of(1)))
     {
       if (driveToPose.isPresent())
       {
@@ -727,7 +678,9 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
       }
       case DRIVE_TO_POSE ->
       {
-        resetDriveToPosePIDControllers();
+        driveToPoseOmegaPIDController.ifPresent(pid -> pid.reset(swerveDrive.getPose().getRotation().getRadians()));
+        driveToPoseTranslationPIDController.ifPresent(
+            pid -> pid.reset(swerveDrive.getDistanceFromPose(driveToPose.orElse(swerveDrive::getPose).get()).in(Meters)));
 //        swerveDrive.resetAzimuthPID();
 //        swerveDrive.resetTranslationPID();
         break;
@@ -749,7 +702,7 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
   /**
    * Apply the scalar value if it exists.
    *
-   * @param axisValue Axis value to apply teh scalar too.
+   * @param axisValue Axis value to apply the scalar to.
    * @return Axis value scaled by scalar value.
    */
   private double applyRotationalScalar(double axisValue)
@@ -963,7 +916,7 @@ public class SwerveInputStream implements Supplier<ChassisSpeeds>
       {
         var           azimuthPIDs    = config.getRotationPID();
         Rotation2d    currentHeading = new Rotation2d(swerveDrive.getGyroAngle());
-        Translation2d relativeTrl    = aimTarget.orElseThrow().relativeTo(swerveDrive.getPose()).getTranslation();
+        Translation2d relativeTrl    = aimTarget.orElseThrow().get().relativeTo(swerveDrive.getPose()).getTranslation();
         Rotation2d    target         = new Rotation2d(relativeTrl.getX(), relativeTrl.getY()).plus(currentHeading);
         omegaRadiansPerSecond = azimuthPIDs.calculate(currentHeading.getRadians(), target.getRadians());
         speeds = new ChassisSpeeds(vxMetersPerSecond, vyMetersPerSecond, omegaRadiansPerSecond);

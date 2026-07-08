@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.math;
 
 import static edu.wpi.first.units.Units.KilogramSquareMeters;
@@ -35,10 +38,40 @@ import yams.gearing.MechanismGearing;
 
 /**
  * LQR Configuration for {@link LQRController}
+ *
+ * <p>The LQR cost matrices determine how the regulator balances state error against control effort:
+ * <ul>
+ *   <li><b>Q (state cost, via qelms)</b> — penalizes deviation from the desired state (position,
+ *       velocity). Smaller values tolerate larger state errors; larger values drive the controller
+ *       to correct errors more aggressively.</li>
+ *   <li><b>R (control effort cost, via relms)</b> — penalizes the voltage applied to the motor.
+ *       Smaller values allow higher voltages (more aggressive); larger values keep the output
+ *       gentler. The default of 12 V matches the approximate maximum battery voltage.</li>
+ * </ul>
+ *
+ * <h2>Example — Arm LQR configuration</h2>
+ * <pre>{@code
+ * import static edu.wpi.first.units.Units.*;
+ *
+ * LQRConfig config = new LQRConfig(
+ *         DCMotor.getNEO(1),
+ *         MechanismGearing.ofReduction(60.0),
+ *         KilogramSquareMeters.of(0.25))
+ *     .withArm(
+ *         Radians.of(0.01),          // qelms position: 0.01 rad error tolerance
+ *         RadiansPerSecond.of(0.5),  // qelms velocity: 0.5 rad/s error tolerance
+ *         Radians.of(0.05),          // model position std dev
+ *         RadiansPerSecond.of(0.5),  // model velocity std dev
+ *         Radians.of(0.01))          // encoder position std dev
+ *     .withControlEffort(Volts.of(12))
+ *     .withMaxVoltage(Volts.of(12))
+ *     .withAggressiveness(10);
+ *
+ * LQRController armController = new LQRController(config);
+ * }</pre>
  */
 public class LQRConfig
 {
-
   /**
    * Get the {@link LQRType} of the LQR.
    *
@@ -134,7 +167,7 @@ public class LQRConfig
    */
   private       Optional<Time>               m_measurementDelay   = Optional.empty();
   /**
-   * Agressiveness.
+   * Aggressiveness.
    */
   private       OptionalDouble               m_aggressiveness     = OptionalDouble.empty();
 
@@ -205,14 +238,14 @@ public class LQRConfig
   }
 
   /**
-   * Agressiveness of the LQR, howfast it will attempt to achieve the desired state.
+   * Aggressiveness of the LQR, how fast it will attempt to achieve the desired state.
    *
-   * @param agressiveness Usually 10, arbitrary scale.
+   * @param aggressiveness Usually 10, arbitrary scale.
    * @return {@link LQRConfig} for chaining.
    */
-  public LQRConfig withAgressiveness(double agressiveness)
+  public LQRConfig withAggressiveness(double aggressiveness)
   {
-    m_aggressiveness = OptionalDouble.of(agressiveness);
+    m_aggressiveness = OptionalDouble.of(aggressiveness);
     return this;
   }
 
@@ -347,7 +380,7 @@ public class LQRConfig
       {
         return new KalmanFilter<N2, N1, N1>(Nat.N2(),
                                             Nat.N1(),
-                                            (LinearSystem<N2, N1, N1>) plant,
+                                            (LinearSystem<N2, N1, N1>) (plant.slice(0)),
                                             (Vector<N2>) m_modelStdDevs.orElseThrow(),
                                             (Vector<N1>) m_encoderStdDevs.orElseThrow(),
                                             m_period.in(Seconds));

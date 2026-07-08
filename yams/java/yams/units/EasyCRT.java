@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.units;
 
 import static edu.wpi.first.units.Units.Rotations;
@@ -18,8 +21,41 @@ import java.util.Optional;
  * <p>This is <b>not</b> a textbook Chinese Remainder Theorem solve; it is a
  * "CRT-inspired" unwrapping method that is easier to keep stable with backlash and sensor
  * noise.
- * 
+ *
  * <p>Created by team 6911.
+ *
+ * <h2>Usage</h2>
+ * <p>Construct an {@code EasyCRT} from a fully-configured {@link EasyCRTConfig}, then call
+ * {@link #getAngleOptional()} periodically. The return value is an {@link java.util.Optional}
+ * containing the resolved mechanism {@link edu.wpi.first.units.measure.Angle} when a unique
+ * solution is found, or {@link java.util.Optional#empty()} when the solve fails or is ambiguous.
+ * Inspect {@link #getLastStatus()} and {@link #getLastErrorRotations()} for diagnostics.
+ *
+ * <pre>{@code
+ * import static edu.wpi.first.units.Units.Rotations;
+ * import yams.units.EasyCRT;
+ * import yams.units.EasyCRTConfig;
+ *
+ * // Build the configuration once (e.g., in robotInit)
+ * EasyCRTConfig config = new EasyCRTConfig(
+ *         encoder1::getAbsolutePosition,
+ *         encoder2::getAbsolutePosition)
+ *     .withCommonDriveGear(11.0, 50, 30, 31)
+ *     .withMechanismRange(Rotations.of(0.0), Rotations.of(5.0))
+ *     .withMatchTolerance(Rotations.of(0.006));
+ *
+ * EasyCRT crt = new EasyCRT(config);
+ *
+ * // Call periodically (e.g., in periodic())
+ * crt.getAngleOptional().ifPresent(angle -> {
+ *     double mechanismRotations = angle.in(Rotations);
+ *     // seed the motor controller with the resolved absolute position
+ * });
+ *
+ * // Diagnostics
+ * EasyCRT.CRTStatus status = crt.getLastStatus();   // OK, NO_SOLUTION, AMBIGUOUS, ...
+ * double errorRot = crt.getLastErrorRotations();    // modular error from the best candidate
+ * }</pre>
  */
 public class EasyCRT {
   /**
@@ -39,7 +75,7 @@ public class EasyCRT {
      */
     AMBIGUOUS,
     /**
-     * No solve attempts have occured.
+     * No solve attempts have occurred.
      */
     NOT_ATTEMPTED,
     /**
@@ -164,7 +200,6 @@ public class EasyCRT {
       double minMechanismRotations,
       double maxMechanismRotations,
       double matchTolerance) {
-
     lastIterations = 0;
     lastErrorRot = Double.NaN;
 

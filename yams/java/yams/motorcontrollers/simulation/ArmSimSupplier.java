@@ -1,14 +1,20 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.motorcontrollers.simulation;
 
 import static edu.wpi.first.units.Units.Amps;
+import static edu.wpi.first.units.Units.Microsecond;
 import static edu.wpi.first.units.Units.Milliseconds;
 import static edu.wpi.first.units.Units.Radians;
 import static edu.wpi.first.units.Units.RadiansPerSecond;
+import static edu.wpi.first.units.Units.RotationsPerSecond;
 import static edu.wpi.first.units.Units.Seconds;
 import static edu.wpi.first.units.Units.Volts;
 
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.units.measure.Angle;
+import edu.wpi.first.units.measure.AngularAcceleration;
 import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.Current;
 import edu.wpi.first.units.measure.Time;
@@ -17,18 +23,52 @@ import edu.wpi.first.wpilibj.simulation.RoboRioSim;
 import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
 import java.util.function.Supplier;
 import yams.gearing.MechanismGearing;
+import yams.math.DerivativeTimeFilter;
 import yams.motorcontrollers.SimSupplier;
 import yams.motorcontrollers.SmartMotorController;
 
 /**
- * ArmSim Supplier
+ * ArmSim Supplier — simulates a single-jointed arm mechanism using WPILib's
+ * {@link edu.wpi.first.wpilibj.simulation.SingleJointedArmSim}.
+ *
+ * <p>
+ * This supplier steps WPILib's {@code SingleJointedArmSim} physics model each control loop and
+ * exposes the resulting angle, angular velocity, current draw, and voltage through the
+ * {@link yams.motorcontrollers.SimSupplier} interface. The arm's gear ratio and control period are
+ * read directly from the associated {@link yams.motorcontrollers.SmartMotorController}'s config,
+ * so no duplication of parameters is required.
+ * </p>
+ *
+ * <h2>Example</h2>
+ * <pre>{@code
+ * // 1. Build the WPILib arm physics model
+ * SingleJointedArmSim armPhysics = new SingleJointedArmSim(
+ *     DCMotor.getNEO(1),
+ *     SingleJointedArmSim.estimateMOI(0.5, 2.0), // moment of inertia (kg·m²)
+ *     5.0,                                         // gear ratio (rotor/mechanism)
+ *     0.5,                                         // arm length (meters)
+ *     Units.degreesToRadians(-10),                 // min angle (radians)
+ *     Units.degreesToRadians(90),                  // max angle (radians)
+ *     true,                                        // simulate gravity
+ *     0);                                          // starting angle (radians)
+ *
+ * // 2. Configure and build the YAMS smart motor controller
+ * SmartMotorController motor = new SparkMaxController(
+ *     new SmartMotorControllerConfig()
+ *         .withGearing(new MechanismGearing(5.0))
+ *         .withClosedLoopControlPeriod(Milliseconds.of(20)));
+ *
+ * // 3. Wrap physics model in the supplier and register it
+ * ArmSimSupplier sim = new ArmSimSupplier(armPhysics, motor);
+ * motor.getConfig().withSimSupplier(sim);
+ * }</pre>
  */
 public class ArmSimSupplier implements SimSupplier
 {
-
   private       boolean             inputFed   = false;
   private       boolean             simUpdated = false;
   private final Supplier<Double>    motorDutyCycleSupplier;
+  private final DerivativeTimeFilter accel;
   private final SingleJointedArmSim sim;
   private final MechanismGearing    mechGearing;
   private final Time                period;
@@ -49,6 +89,7 @@ public class ArmSimSupplier implements SimSupplier
     mechGearing = config.getGearing();
     period = config.getClosedLoopControlPeriod().orElse(Milliseconds.of(20));
     motor = smartMotorController.getDCMotor();
+    accel = new DerivativeTimeFilter(period);
   }
 
   @Override
@@ -67,7 +108,6 @@ public class ArmSimSupplier implements SimSupplier
         //Thread.sleep(1);
       } catch (Exception e)
       {
-
       }
       feedUpdateSim();
     }
@@ -178,5 +218,11 @@ public class ArmSimSupplier implements SimSupplier
   public Current getCurrentDraw()
   {
     return Amps.of(sim.getCurrentDrawAmps());
+  }
+
+  @Override
+  public AngularAcceleration getRotorAcceleration()
+  {
+    return RotationsPerSecond.per(Microsecond).of(accel.derivative(getRotorVelocity().in(RotationsPerSecond)));
   }
 }

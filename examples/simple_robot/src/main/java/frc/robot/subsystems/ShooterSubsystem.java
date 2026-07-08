@@ -1,10 +1,12 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package frc.robot.subsystems;
 
 import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Pounds;
 
 import com.ctre.phoenix6.hardware.TalonFX;
-import com.thethriftybot.devices.ThriftyNova;
 import edu.wpi.first.math.controller.SimpleMotorFeedforward;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.units.measure.AngularVelocity;
@@ -21,12 +23,11 @@ import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.SmartMotorControllerConfig.ControlMode;
 import yams.motorcontrollers.SmartMotorControllerConfig.MotorMode;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
-import yams.motorcontrollers.local.NovaWrapper;
+import yams.motorcontrollers.remote.TalonFXWrapper;
 
 public class ShooterSubsystem extends SubsystemBase
 {
-
-  private final ThriftyNova                flywheelMotor1         = new ThriftyNova(1);
+  private final TalonFX                    flywheelMotor1         = new TalonFX(1);
   private final TalonFX                    flywheelMotor2         = new TalonFX(2);
   private final boolean                    flywheelMotor2Inverted = true;
   private final SmartMotorControllerConfig motorConfig            = new SmartMotorControllerConfig(this)
@@ -40,16 +41,16 @@ public class ShooterSubsystem extends SubsystemBase
 //      .withVendorConfig(new TalonFXConfiguration().withVoltage(new VoltageConfigs().withPeakReverseVoltage(0)))
 //      .withFollowers(Pair.of(flywheelMotor2, flywheelMotor2Inverted))
       .withControlMode(ControlMode.CLOSED_LOOP);
-  private final SmartMotorController       motor                  = new NovaWrapper(flywheelMotor1,
-                                                                                    DCMotor.getNEO(2),
-                                                                                    motorConfig);
-  private final FlyWheelConfig             shooterConfig          = new FlyWheelConfig(motor)
+  private final SmartMotorController       motor                  = new TalonFXWrapper(flywheelMotor1,
+                                                                                       DCMotor.getNEO(2),
+                                                                                       motorConfig);
+  private final FlyWheelConfig             shooterConfig          = new FlyWheelConfig()
       // Diameter of the flywheel.
       .withDiameter(Inches.of(4))
       // Mass of the flywheel.
       .withMass(Pounds.of(4))
       .withTelemetry("ShooterMech", TelemetryVerbosity.HIGH);
-  private final FlyWheel                   shooter                = new FlyWheel(shooterConfig);
+  private final FlyWheel                   shooter                = new FlyWheel(shooterConfig, motor);
 
   public ShooterSubsystem() {}
 
@@ -66,7 +67,7 @@ public class ShooterSubsystem extends SubsystemBase
    * @param speed Speed to set.
    * @return {@link edu.wpi.first.wpilibj2.command.RunCommand}
    */
-  public Command setVelocity(AngularVelocity speed) {return shooter.setSpeed(speed);}
+  public Command setVelocity(AngularVelocity speed) {return shooter.run(speed);}
 
   /**
    * Set the dutycycle of the shooter.
@@ -103,5 +104,15 @@ public class ShooterSubsystem extends SubsystemBase
     if (motor.getMechanismSetpointVelocity().isEmpty())
     {return false;}
     return motor.getMechanismVelocity().isNear(motor.getMechanismSetpointVelocity().orElseThrow(), tolerance);
+  }
+
+  public void setVelocitySetpoint(AngularVelocity speed)
+  {
+    shooter.setMechanismVelocitySetpoint(speed);
+  }
+
+  public void setDutyCycleSetpoint(double dutyCycle)
+  {
+    shooter.setDutyCycleSetpoint(dutyCycle);
   }
 }

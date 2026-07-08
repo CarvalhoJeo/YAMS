@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.positional;
 
 import static edu.wpi.first.units.Units.Degrees;
@@ -10,14 +13,8 @@ import edu.wpi.first.math.geometry.Rotation3d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.geometry.Translation3d;
 import edu.wpi.first.math.system.plant.LinearSystemId;
-import edu.wpi.first.units.VoltageUnit;
 import edu.wpi.first.units.measure.Angle;
-import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.Distance;
-import edu.wpi.first.units.measure.LinearVelocity;
-import edu.wpi.first.units.measure.Time;
-import edu.wpi.first.units.measure.Velocity;
-import edu.wpi.first.units.measure.Voltage;
 import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.simulation.BatterySim;
 import edu.wpi.first.wpilibj.simulation.DCMotorSim;
@@ -40,11 +37,50 @@ import yams.motorcontrollers.SmartMotorController;
 import yams.motorcontrollers.simulation.DCMotorSimSupplier;
 
 /**
- * Arm mechanism.
+ * A differential mechanism for FRC robots driven by two coordinated motors whose combined motion
+ * produces two distinct and independent outputs.
+ *
+ * <p>In a differential drive mechanism the two motors do <b>not</b> independently move two
+ * separate joints. Instead, their outputs are mixed mathematically:</p>
+ * <ul>
+ *   <li><b>Tilt</b> — controlled by the <em>sum</em> of the left and right motor positions
+ *       ({@code (left + right) / 2}). When both motors turn in the same direction the mechanism
+ *       tilts up or down.</li>
+ *   <li><b>Twist</b> — controlled by the <em>difference</em> of the left and right motor
+ *       positions ({@code (left - right) / 2}). When the motors turn in opposite directions the
+ *       mechanism rotates about its longitudinal axis.</li>
+ * </ul>
+ *
+ * <p>A common FRC use-case is a differential wrist at the end of an arm where one motor controls
+ * pitch while the other controls roll, allowing the intake or end-effector to be positioned in
+ * two degrees of freedom with fewer motors than a traditional two-joint wrist.</p>
+ *
+ * <h2>Usage Example</h2>
+ * <pre>{@code
+ * // Build the config (leftSMC / rightSMC already configured with tilt gearing).
+ * DifferentialMechanismConfig config = new DifferentialMechanismConfig(leftSMC, rightSMC)
+ *     .withStartingPosition(Degrees.of(30), Degrees.of(0))  // tilt=30°, twist=0°
+ *     .withLength(Inches.of(14))
+ *     .withMOI(Inches.of(14), Pounds.of(2))
+ *     .withTelemetry("DifferentialWrist", TelemetryVerbosity.HIGH);
+ *
+ * DifferentialMechanism wrist = new DifferentialMechanism(config);
+ *
+ * // Command: tilt to 60° and twist to 45°.
+ * Command scoreCommand = wrist.setPosition(Degrees.of(60), Degrees.of(45));
+ *
+ * // Command: continuously follow a joystick (suppliers).
+ * Command manualCommand = wrist.run(
+ *     () -> Degrees.of(driverController.getLeftY() * 90),
+ *     () -> Degrees.of(driverController.getRightX() * 90));
+ *
+ * // Read current positions.
+ * Angle tilt  = wrist.getTiltPosition();
+ * Angle twist = wrist.getTwistPosition();
+ * }</pre>
  */
 public class DifferentialMechanism extends SmartPositionalMechanism
 {
-
   /**
    * Left {@link SmartMotorController}
    */
@@ -268,39 +304,31 @@ public class DifferentialMechanism extends SmartPositionalMechanism
     }, m_subsystem).withName(getName() + " set position");
   }
 
+  /**
+   * Set the position of the differential mechanism.
+   *
+   * @param tilt  Tilt of the differential mechanism.
+   * @param twist Twist of the differential mechanism.
+   * @return {@link edu.wpi.first.wpilibj2.command.RunCommand} to set the position.
+   */
   public Command run(Angle tilt, Angle twist)
   {
     return Commands.run(() -> {
-    var left  = m_config.getLeftMechanismPosition(tilt, twist);
-    var right = m_config.getRightMechanismPosition(tilt, twist);
-    m_leftSMC.setPosition(left);
-    m_rightSMC.setPosition(right);
-  }, m_subsystem).withName(getName() + " set position");
+      var left  = m_config.getLeftMechanismPosition(tilt, twist);
+      var right = m_config.getRightMechanismPosition(tilt, twist);
+      m_leftSMC.setPosition(left);
+      m_rightSMC.setPosition(right);
+    }, m_subsystem).withName(getName() + " set position");
   }
 
+  /**
+   * Run the differential mechanism to a position.
+   *
+   * @param tilt  Supplier of the tilt angle.
+   * @param twist Supplier of the twist angle.
+   * @return {@link edu.wpi.first.wpilibj2.command.RunCommand} to run the differential mechanism to the position.
+   */
   public Command run(Supplier<Angle> tilt, Supplier<Angle> twist)
-  {
-    return Commands.run(() -> {
-    var left  = m_config.getLeftMechanismPosition(tilt.get(), twist.get());
-    var right = m_config.getRightMechanismPosition(tilt.get(), twist.get());
-    m_leftSMC.setPosition(left);
-    m_rightSMC.setPosition(right);
-  }, m_subsystem).withName(getName() + " set position");
-  }
-
-  @Deprecated
-  public Command runTo(Angle tilt, Angle twist)
-  {
-    return Commands.runOnce(() -> {
-    var left  = m_config.getLeftMechanismPosition(tilt, twist);
-    var right = m_config.getRightMechanismPosition(tilt, twist);
-    m_leftSMC.setPosition(left);
-    m_rightSMC.setPosition(right);
-  }, m_subsystem).withName(getName() + " set position");
-  }
-
-  @Deprecated
-  public Command runTo(Supplier<Angle> tilt, Supplier<Angle> twist)
   {
     return Commands.run(() -> {
       var left  = m_config.getLeftMechanismPosition(tilt.get(), twist.get());
@@ -373,94 +401,13 @@ public class DifferentialMechanism extends SmartPositionalMechanism
     return m_config.getTelemetryName().orElse("DifferentialMechanism");
   }
 
-  @Override
-  @Deprecated
-  public Trigger max()
-  {
-    throw new RuntimeException("Unimplemented");
-  }
+    @Override
+    public Trigger max() {
+        throw new RuntimeException("Unsupported operation");
+    }
 
-  @Override
-  @Deprecated
-  public Command set(double dutycycle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Command set(Supplier<Double> dutycyle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Command setVoltage(Voltage volts)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Command setVoltage(Supplier<Voltage> volts)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Trigger min()
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Command sysId(Voltage maximumVoltage, Velocity<VoltageUnit> step, Time duration)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMeasurementVelocitySetpoint(LinearVelocity velocity)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMechanismVelocitySetpoint(AngularVelocity velocity)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMeasurementPositionSetpoint(Distance distance)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMechanismPositionSetpoint(Angle angle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setVoltageSetpoint(Voltage voltage)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setDutyCycleSetpoint(double dutycycle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
+    @Override
+    public Trigger min() {
+        throw new RuntimeException("Unsupported operation");
+    }
 }

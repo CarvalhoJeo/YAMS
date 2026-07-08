@@ -1,14 +1,18 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.positional;
 
 import static edu.wpi.first.units.Units.Amps;
-import static edu.wpi.first.units.Units.Centimeters;
 import static edu.wpi.first.units.Units.Degrees;
 import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Kilograms;
 import static edu.wpi.first.units.Units.Meters;
 import static edu.wpi.first.units.Units.MetersPerSecond;
+import static edu.wpi.first.units.Units.Microsecond;
 import static edu.wpi.first.units.Units.Milliseconds;
 import static edu.wpi.first.units.Units.RadiansPerSecond;
+import static edu.wpi.first.units.Units.RotationsPerSecond;
 import static edu.wpi.first.units.Units.Seconds;
 import static edu.wpi.first.units.Units.Volts;
 
@@ -16,14 +20,12 @@ import edu.wpi.first.math.filter.Debouncer.DebounceType;
 import edu.wpi.first.math.geometry.Rotation3d;
 import edu.wpi.first.math.geometry.Translation3d;
 import edu.wpi.first.math.system.plant.DCMotor;
-import edu.wpi.first.units.VoltageUnit;
 import edu.wpi.first.units.measure.Angle;
+import edu.wpi.first.units.measure.AngularAcceleration;
 import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.Current;
 import edu.wpi.first.units.measure.Distance;
 import edu.wpi.first.units.measure.LinearVelocity;
-import edu.wpi.first.units.measure.Time;
-import edu.wpi.first.units.measure.Velocity;
 import edu.wpi.first.units.measure.Voltage;
 import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.simulation.BatterySim;
@@ -37,12 +39,12 @@ import edu.wpi.first.wpilibj.util.Color8Bit;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
-import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
-import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 import java.util.Optional;
 import java.util.function.Supplier;
 import yams.exceptions.ElevatorConfigurationException;
+import yams.exceptions.SmartMotorControllerConfigurationException;
 import yams.gearing.MechanismGearing;
+import yams.math.DerivativeTimeFilter;
 import yams.mechanisms.config.ElevatorConfig;
 import yams.mechanisms.config.MechanismPositionConfig;
 import yams.mechanisms.config.MechanismPositionConfig.Plane;
@@ -52,10 +54,30 @@ import yams.motorcontrollers.SmartMotorControllerConfig;
 
 /**
  * Elevator mechanism.
+ *
+ * <h2>Usage Example</h2>
+ * <pre>{@code
+ * SmartMotorController motor = new TalonFXWrapper(
+ *     new TalonFX(4), DCMotor.getKrakenX60(1),
+ *     new SmartMotorControllerConfig().withClosedLoopController(0.5,0,0).withFeedforward(new ElevatorFeedforward(0.4,0,0));
+ * Elevator elevator = new Elevator(
+ *     new ElevatorConfig(motor).withDrumRadius(Inches.of(1.0)));
+ *
+ * // Move to heights
+ * Command toHigh = elevator.setHeight(Meters.of(1.2));
+ * Command toLow  = elevator.runTo(Meters.of(0.05), Meters.of(0.01));
+ *
+ * // Trigger bindings
+ * elevator.isNear(Meters.of(1.2), Meters.of(0.02)).onTrue(shooter.shoot());
+ * elevator.max().onTrue(Commands.print("Elevator at max"));
+ *
+ * // In periodic():
+ * elevator.simIterate();
+ * elevator.updateTelemetry();
+ * }</pre>
  */
 public class Elevator extends SmartPositionalMechanism
 {
-
   /**
    * Config class for the elevator.
    */
@@ -73,32 +95,32 @@ public class Elevator extends SmartPositionalMechanism
    * Construct the {@link Elevator} class for easy manipulation of an elevator.
    *
    * @param config {@link ElevatorConfig} to set.
+   * @param smc {@link SmartMotorController} to use for the Elevator
    */
-  public Elevator(ElevatorConfig config)
+  public Elevator(ElevatorConfig config, SmartMotorController smc)
   {
     m_config = config;
-    m_smc = config.getMotor();
+    m_smc = smc;
+    SmartMotorControllerConfig smcCfg = smc.getConfig();
     DCMotor                    dcMotor   = m_smc.getDCMotor();
     MechanismGearing           gearing   = m_smc.getConfig().getGearing();
     SmartMotorControllerConfig smcConfig = m_smc.getConfig();
-    m_subsystem = config.getMotor().getConfig().getSubsystem();
+    m_subsystem = smcCfg.getSubsystem();
     if (config.getTelemetryName().isPresent())
     {
       // TODO: Add telemetry units to config.
       m_telemetry.setupTelemetry(getName(),
                                  m_smc);
     }
-    config.applyConfig();
 
     if (RobotBase.isSimulation())
     {
-      SmartMotorController motor = config.getMotor();
-      motor.setupSimulation();
+      smc.setupSimulation();
       if (config.getCarriageMass().isEmpty())
       {
         throw new ElevatorConfigurationException("Mass is not configured!",
                                                  "Cannot create simulator",
-                                                 "withMass(Mass)");
+                                                 "withCarriageWeight(Mass)");
       }
       if (config.getMinimumHeight().isEmpty())
       {
@@ -112,28 +134,38 @@ public class Elevator extends SmartPositionalMechanism
                                                  "Cannot create simulator",
                                                  "withHardLimits(Distance,Distance)");
       }
-      if (config.getStartingHeight().isEmpty())
+      if (smcConfig.getStartingPosition().isEmpty())
       {
-        throw new ElevatorConfigurationException("Starting height is not configured!",
+        throw new SmartMotorControllerConfigurationException("Starting height is not configured!",
                                                  "Cannot create simulator",
-                                                 "withStartingHeight(Distance)");
+                                                 "withStartingPosition(Distance)");
+      }
+      if (smcConfig.convertFromMechanism(smcConfig.getStartingPosition().orElseThrow()).lt(config.getMinimumHeight().get()) ||
+              smcConfig.convertFromMechanism(smcConfig.getStartingPosition().orElseThrow()).gt(config.getMaximumHeight().get()))
+      {
+        throw new SmartMotorControllerConfigurationException("Elevator starting height is outside hard limits",
+                                                 "Cannot create simulator",
+                                                 "withStartingPosition(Distance)");
       }
 
       boolean simulateGravity = !config.getIsElevatorHorizontal();
 
-      m_sim = Optional.of(new ElevatorSim(motor.getDCMotor(),
-                                          motor.getConfig().getGearing().getMechanismToRotorRatio(),
+      m_sim = Optional.of(new ElevatorSim(smc.getDCMotor(),
+                                          smcConfig.getGearing().getMechanismToRotorRatio(),
                                           config.getCarriageMass().get().in(Kilograms),
-                                          config.getDrumRadius().in(Meters),
+                                          smcCfg.getMechanismCircumference().orElseThrow().div(2).div(Math.PI).in(Meters),
                                           config.getMinimumHeight().get().in(Meters),
                                           config.getMaximumHeight().get().in(Meters),
                                           simulateGravity,
-                                          config.getStartingHeight().get().in(Meters),
+              smcConfig.convertFromMechanism(smcConfig.getStartingPosition().orElseThrow()).in(Meters),
                                           0.01 / 4096, 0.01 / 4096));
       m_smc.setSimSupplier(new SimSupplier()
       {
         final Supplier<Double> pos = m_sim.get()::getPositionMeters;
         final Supplier<Double> mps = m_sim.get()::getVelocityMetersPerSecond;
+        final DerivativeTimeFilter mpsps = new DerivativeTimeFilter(pos.get(),
+                                                                    smcConfig.getClosedLoopControlPeriod()
+                                                                             .orElse(Milliseconds.of(20)));
         boolean inputFed   = false;
         boolean updatedSim = false;
 
@@ -258,6 +290,12 @@ public class Elevator extends SmartPositionalMechanism
         {
           return Amps.of(m_sim.get().getCurrentDrawAmps());
         }
+
+        @Override
+        public AngularAcceleration getRotorAcceleration()
+        {
+          return RotationsPerSecond.per(Microsecond).of(mpsps.derivative(getRotorVelocity().in(RotationsPerSecond)));
+        }
       });
       m_mechanismWindow = new Mechanism2d(config.getMaximumHeight().get().in(Meters) * 2,
                                           config.getMaximumHeight().get().in(Meters) * 2);
@@ -329,12 +367,12 @@ public class Elevator extends SmartPositionalMechanism
                        ));
 
       m_mechanismLigament = m_mechanismRoot.append(new MechanismLigament2d(getName(),
-                                                                           config.getStartingHeight().get().in(Meters),
+              smcConfig.convertFromMechanism(smcConfig.getStartingPosition().orElseThrow()).in(Meters),
                                                                            config.getAngle().in(Degrees),
                                                                            6,
                                                                            config.getSimColor()));
       m_setpointLigament = m_mechanismRoot.append(new MechanismLigament2d("Setpoint",
-                                                                          config.getStartingHeight().get().in(Meters),
+              smcConfig.convertFromMechanism(smcConfig.getStartingPosition().orElseThrow()).in(Meters),
                                                                           config.getAngle().in(Degrees),
                                                                           3,
                                                                           new Color8Bit(Color.kWhite)));
@@ -360,7 +398,7 @@ public class Elevator extends SmartPositionalMechanism
       m_smc.getSimSupplier().get().updateSimState();
       m_smc.simIterate();
       m_smc.getSimSupplier().get().starveUpdateSim();
-      // It is impossible for an elevator to go bellow the minimum height, it would break...
+      // It is impossible for an elevator to go below the minimum height, it would break...
       if (m_config.getMinimumHeight().isPresent() && getHeight().lt(m_config.getMinimumHeight().get()))
       {
 //        m_motor.simIterate(RotationsPerSecond.of(0));
@@ -379,11 +417,10 @@ public class Elevator extends SmartPositionalMechanism
   @Override
   public void visualizationUpdate()
   {
-// TODO: Add setpoint ligament
     m_mechanismLigament.setLength(getHeight().in(Meters));
     if (getMotor().getMechanismPositionSetpoint().isPresent())
     {
-      m_setpointLigament.setLength(m_config.getMotor().getConfig()
+      m_setpointLigament.setLength(m_smc.getConfig()
                                            .convertFromMechanism(getMotor().getMechanismPositionSetpoint().get())
                                            .in(Meters));
     }
@@ -554,12 +591,12 @@ public class Elevator extends SmartPositionalMechanism
   {
     if (m_smc.getConfig().getMechanismLowerLimit().isPresent())
     {
-      return new Trigger(gte(m_smc.getConfig()
+      return new Trigger(lte(m_smc.getConfig()
                                   .convertFromMechanism(m_smc.getConfig().getMechanismLowerLimit().get())));
     }
     if (m_config.getMinimumHeight().isPresent())
     {
-      return gte(m_config.getMinimumHeight().get());
+      return lte(m_config.getMinimumHeight().get());
     }
     throw new ElevatorConfigurationException("Minimum height is not configured!",
                                              "Cannot create min trigger.",
@@ -599,57 +636,6 @@ public class Elevator extends SmartPositionalMechanism
   public Trigger gte(Distance height)
   {
     return new Trigger(() -> getHeight().gte(height));
-  }
-
-  @Override
-  public Command sysId(Voltage maximumVoltage, Velocity<VoltageUnit> step, Time duration)
-  {
-    SysIdRoutine               routine     = m_smc.sysId(maximumVoltage, step, duration);
-    SmartMotorControllerConfig motorConfig = m_smc.getConfig();
-    Distance                   max;
-    Distance                   min;
-    if (m_smc.getConfig().getMechanismUpperLimit().isPresent())
-    {
-      max = motorConfig.convertFromMechanism(m_smc.getConfig().getMechanismUpperLimit().get())
-                       .minus(Centimeters.of(1));
-    } else if (m_config.getMaximumHeight().isPresent())
-    {
-      max = m_config.getMaximumHeight().get().minus(Centimeters.of(1));
-    } else
-    {
-      throw new ElevatorConfigurationException("Maximum height is not configured!",
-                                               "Cannot create SysIdRoutine!",
-                                               "withHardLimits(Distance,Distance)");
-
-    }
-    if (m_smc.getConfig().getMechanismLowerLimit().isPresent())
-    {
-      min = motorConfig.convertFromMechanism(m_smc.getConfig().getMechanismLowerLimit().get())
-                       .plus(Centimeters.of(10));
-    } else if (m_config.getMinimumHeight().isPresent())
-    {
-      min = m_config.getMinimumHeight().get().plus(Centimeters.of(1));
-    } else
-    {
-      throw new ElevatorConfigurationException("Minimum height is not configured!",
-                                               "Cannot create SysIdRoutine!",
-                                               "withHardLimits(Distance,Distance)");
-    }
-    Trigger maxTrigger = gte(max);
-    Trigger minTrigger = lte(min);
-
-    Command group = Commands.print("Starting SysId!")
-                            .beforeStarting(Commands.runOnce(m_smc::stopClosedLoopController))
-                            .andThen(routine.dynamic(Direction.kForward).until(maxTrigger).withTimeout(3))
-                            .andThen(routine.dynamic(Direction.kReverse).until(minTrigger))
-                            .andThen(routine.quasistatic(Direction.kForward).until(maxTrigger))
-                            .andThen(routine.quasistatic(Direction.kReverse).until(minTrigger).withTimeout(3))
-                            .finallyDo(m_smc::startClosedLoopController);
-    if (m_config.getTelemetryName().isPresent())
-    {
-      group = group.andThen(Commands.print(getName() + " SysId test done."));
-    }
-    return group.withName(m_subsystem.getName() + " SysId");
   }
 
   /**

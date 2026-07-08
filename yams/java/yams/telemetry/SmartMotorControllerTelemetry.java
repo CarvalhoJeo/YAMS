@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.telemetry;
 
 import static edu.wpi.first.units.Units.Amps;
@@ -9,24 +12,55 @@ import static edu.wpi.first.units.Units.MetersPerSecondPerSecond;
 import static edu.wpi.first.units.Units.RPM;
 import static edu.wpi.first.units.Units.Rotations;
 import static edu.wpi.first.units.Units.RotationsPerSecond;
+import static edu.wpi.first.units.Units.RotationsPerSecondPerSecond;
 import static edu.wpi.first.units.Units.Second;
 import static edu.wpi.first.units.Units.Seconds;
 import static edu.wpi.first.units.Units.Volts;
 
 import edu.wpi.first.networktables.NetworkTable;
 import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalDouble;
 import yams.exceptions.SmartMotorControllerConfigurationException;
 import yams.motorcontrollers.SmartMotorController;
+import yams.motorcontrollers.SmartMotorController.ClosedLoopControllerSlot;
 import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
 
 /**
  * Smart motor controller telemetry.
+ *
+ * <p>Publishes motor controller state — including duty-cycle output voltage, stator/supply current,
+ * rotor/mechanism position and velocity, and motor temperature — to NetworkTables so that tools
+ * such as SmartDashboard, Elastic, and Advantage Scope can consume the data in real time.
+ * Tunable fields (PID gains, setpoints, motion-profile limits) are additionally exposed on a
+ * separate {@code Tuning} table so they can be adjusted without redeploying code.
+ *
+ * <p>This class is managed internally by {@link SmartMotorController}. You do not normally
+ * instantiate it directly; instead call the methods on the motor controller itself:
+ *
+ * <h2>Basic usage (default NetworkTable path)</h2>
+ * <pre>{@code
+ * // In robotInit() or subsystem constructor:
+ * motor.setupTelemetry();   // publishes under Mechanisms/<motorName>
+ *
+ * // In robotPeriodic() or subsystemPeriodic():
+ * motor.updateTelemetry();
+ * }</pre>
+ *
+ * <h2>Custom NetworkTable path and telemetry config</h2>
+ * <pre>{@code
+ * NetworkTable dataTable   = NetworkTableInstance.getDefault().getTable("Mechanisms").getSubTable("Shooter");
+ * NetworkTable tuningTable = NetworkTableInstance.getDefault().getTable("Tuning").getSubTable("Shooter");
+ *
+ * motor.setupTelemetry(dataTable, tuningTable);
+ *
+ * // In periodic:
+ * motor.updateTelemetry();
+ * }</pre>
  */
 public class SmartMotorControllerTelemetry
 {
-
-
   /**
    * {@link TelemetryVerbosity} for the {@link SmartMotorController}
    */
@@ -76,11 +110,15 @@ public class SmartMotorControllerTelemetry
       boolFields = config.getBoolFields(smartMotorController);
       for (Map.Entry<DoubleTelemetryField, DoubleTelemetry> entry : doubleFields.entrySet())
       {
-        entry.getValue().transformUnit(smcConfig).setupNetworkTables(dataNetworkTable, tuningNetworkTable);
+        if (config.getNT4Enabled())
+        {entry.getValue().transformUnit(smcConfig).setupNetworkTables(dataNetworkTable, tuningNetworkTable);}
+        config.getDataLogName().ifPresent(name -> entry.getValue().transformUnit(smcConfig).setupDataLog(name));
       }
-      for (Map.Entry<DoubleTelemetryField, DoubleTelemetry> entry : doubleFields.entrySet())
+      for (Map.Entry<BooleanTelemetryField, BooleanTelemetry> entry : boolFields.entrySet())
       {
-        entry.getValue().transformUnit(smcConfig).setupNetworkTables(dataNetworkTable, tuningNetworkTable);
+        if (config.getNT4Enabled())
+        {entry.getValue().setupNetworkTables(dataNetworkTable, tuningNetworkTable);}
+        config.getDataLogName().ifPresent(name -> entry.getValue().setupDataLog(name));
       }
 
     }
@@ -105,38 +143,17 @@ public class SmartMotorControllerTelemetry
       switch (bt.getField())
       {
         case MechanismUpperLimit ->
-        {
-          cfg.getMechanismUpperLimit().ifPresent(upperLimit -> bt.set(smc.getMechanismPosition().gte(upperLimit)));
-        }
+            cfg.getMechanismUpperLimit().ifPresent(upperLimit -> bt.set(smc.getMechanismPosition().gte(upperLimit)));
         case MechanismLowerLimit ->
-        {
-          cfg.getMechanismLowerLimit().ifPresent(lowerLimit -> bt.set(smc.getMechanismPosition().lte(lowerLimit)));
-        }
-        case TemperatureLimit ->
-        {
-          cfg.getTemperatureCutoff().ifPresent(temperatureCutoff -> bt.set(smc.getTemperature()
-                                                                              .gte(temperatureCutoff)));
-        }
-        case VelocityControl ->
-        {
-          bt.set(smc.getMechanismSetpointVelocity().isPresent());
-        }
-        case ElevatorFeedForward ->
-        {
-          bt.set(cfg.getElevatorFeedforward().isPresent());
-        }
-        case ArmFeedForward ->
-        {
-          bt.set(cfg.getArmFeedforward().isPresent());
-        }
-        case SimpleMotorFeedForward ->
-        {
-          bt.set(cfg.getSimpleFeedforward().isPresent());
-        }
-        case MotionProfile ->
-        {
-          bt.set(cfg.getExponentialProfile().isPresent() || cfg.getTrapezoidProfile().isPresent());
-        }
+            cfg.getMechanismLowerLimit().ifPresent(lowerLimit -> bt.set(smc.getMechanismPosition().lte(lowerLimit)));
+        case TemperatureLimit -> cfg.getTemperatureCutoff().ifPresent(temperatureCutoff -> bt.set(smc.getTemperature()
+                                                                                                     .gte(
+                                                                                                         temperatureCutoff)));
+        case VelocityControl -> bt.set(smc.getMechanismSetpointVelocity().isPresent());
+        case ElevatorFeedForward -> bt.set(cfg.getElevatorFeedforward(smc.getClosedLoopControllerSlot()).isPresent());
+        case ArmFeedForward -> bt.set(cfg.getArmFeedforward(smc.getClosedLoopControllerSlot()).isPresent());
+        case SimpleMotorFeedForward -> bt.set(cfg.getSimpleFeedforward(smc.getClosedLoopControllerSlot()).isPresent());
+        case MotionProfile -> bt.set(cfg.getExponentialProfile().isPresent() || cfg.getTrapezoidProfile().isPresent());
       }
     }
     for (Map.Entry<DoubleTelemetryField, DoubleTelemetry> entry : doubleFields.entrySet())
@@ -163,47 +180,27 @@ public class SmartMotorControllerTelemetry
                                                                      .in(MetersPerSecond) :
                                                                   mechSetpoint.in(RotationsPerSecond)));
         }
-        case OutputVoltage ->
-        {
-          dt.set(smc.getVoltage().in(Volts));
-        }
-        case StatorCurrent ->
-        {
-          dt.set(smc.getStatorCurrent().in(Amps));
-        }
-        case SupplyCurrent ->
-        {
-          smc.getSupplyCurrent().ifPresent(current -> dt.set(current.in(Amps)));
-        }
-        case MotorTemperature ->
-        {
-          dt.set(smc.getTemperature().in(Fahrenheit));
-        }
+        case OutputVoltage -> dt.set(smc.getVoltage().in(Volts));
+        case StatorCurrent -> dt.set(smc.getStatorCurrent().in(Amps));
+        case SupplyCurrent -> smc.getSupplyCurrent().ifPresent(current -> dt.set(current.in(Amps)));
+        case MotorTemperature -> dt.set(smc.getTemperature().in(Fahrenheit));
         case MeasurementPosition ->
-        {
-          cfg.getMechanismCircumference().ifPresent(circumference -> dt.set(smc.getMeasurementPosition().in(Meters)));
-        }
+            cfg.getMechanismCircumference().ifPresent(circumference -> dt.set(smc.getMeasurementPosition().in(Meters)));
         case MeasurementVelocity ->
-        {
-          cfg.getMechanismCircumference().ifPresent(circumference -> dt.set(smc.getMeasurementVelocity()
-                                                                               .in(MetersPerSecond)));
-        }
-        case MechanismPosition ->
-        {
-          dt.set(smc.getMechanismPosition().in(Rotations));
-        }
-        case MechanismVelocity ->
-        {
-          dt.set(smc.getMechanismVelocity().in(RotationsPerSecond));
-        }
-        case RotorPosition ->
-        {
-          dt.set(smc.getRotorPosition().in(Rotations));
-        }
-        case RotorVelocity ->
-        {
-          dt.set(smc.getRotorVelocity().in(RotationsPerSecond));
-        }
+            cfg.getMechanismCircumference().ifPresent(circumference -> dt.set(smc.getMeasurementVelocity()
+                                                                                 .in(MetersPerSecond)));
+        case MeasurementAcceleration ->
+            cfg.getMechanismCircumference().ifPresent(c -> dt.set(smc.getMeasurementAcceleration()
+                                                                     .in(MetersPerSecondPerSecond)));
+        case MechanismPosition -> dt.set(smc.getMechanismPosition().in(Rotations));
+        case MechanismVelocity -> dt.set(smc.getMechanismVelocity().in(RotationsPerSecond));
+        case MechanismAcceleration -> dt.set(smc.getMechanismAcceleration().in(RotationsPerSecondPerSecond));
+        case RotorPosition -> dt.set(smc.getRotorPosition().in(Rotations));
+        case RotorVelocity -> dt.set(smc.getRotorVelocity().in(RotationsPerSecond));
+        case ExternalEncoderPosition -> dt.set(smc.getExternalEncoderPosition().orElse(Rotations.zero()).in(Rotations));
+        case ExternalEncoderVelocity -> dt.set(smc.getExternalEncoderVelocity().orElse(RotationsPerSecond.zero())
+                                                  .in(RotationsPerSecond));
+        case ActiveClosedLoopControllerSlot -> dt.set(smc.getClosedLoopControllerSlot().ordinal());
       }
     }
   }
@@ -242,6 +239,15 @@ public class SmartMotorControllerTelemetry
       {
         switch (dt.getField())
         {
+          case TunableClosedLoopControllerSlot ->
+          {
+            if (dt.get() >= 0 && dt.get() < ClosedLoopControllerSlot.values().length)
+            {
+              var slot = ClosedLoopControllerSlot.values()[(int) dt.get()];
+              if (!smartMotorController.getClosedLoopControllerSlot().equals(slot))
+              {smartMotorController.setClosedLoopSlot(slot);}
+            }
+          }
           case TunableSetpointPosition ->
           {
             if (cfg.getLinearClosedLoopControllerUse())
@@ -255,7 +261,7 @@ public class SmartMotorControllerTelemetry
           }
           case TunableSetpointVelocity ->
           {
-            if (dt.get() == 0 && smartMotorController.getMechanismSetpointVelocity().isEmpty())
+            if (dt.get() == 0)
             {
               continue;
             }
@@ -283,7 +289,7 @@ public class SmartMotorControllerTelemetry
           case MeasurementLowerLimit -> smartMotorController.setMeasurementLowerLimit(Meters.of(dt.get()));
           case MechanismUpperLimit -> smartMotorController.setMechanismUpperLimit(Degrees.of(dt.get()));
           case MechanismLowerLimit -> smartMotorController.setMechanismLowerLimit(Degrees.of(dt.get()));
-          case MotionProfileMaxAcceleration ->
+          case TrapezoidalProfileMaxAcceleration ->
           {
             if (cfg.getLinearClosedLoopControllerUse())
             {
@@ -296,7 +302,7 @@ public class SmartMotorControllerTelemetry
             }
             break;
           }
-          case MotionProfileMaxVelocity ->
+          case TrapezoidalProfileMaxVelocity ->
           {
             if (cfg.getLinearClosedLoopControllerUse())
             {
@@ -306,6 +312,28 @@ public class SmartMotorControllerTelemetry
               smartMotorController.setMotionProfileMaxVelocity(RPM.of(dt.get()));
             }
             break;
+          }
+          case TrapezoidalProfileMaxJerk ->
+          {
+            smartMotorController.setMotionProfileMaxJerk(RPM.per(Second).per(Second).of(dt.get()));
+          }
+          case ExponentialProfileKA ->
+          {
+            smartMotorController.setExponentialProfile(OptionalDouble.empty(),
+                                                       OptionalDouble.of(dt.get()),
+                                                       Optional.empty());
+          }
+          case ExponentialProfileKV ->
+          {
+            smartMotorController.setExponentialProfile(OptionalDouble.of(dt.get()),
+                                                       OptionalDouble.empty(),
+                                                       Optional.empty());
+          }
+          case ExponentialProfileMaxInput ->
+          {
+            smartMotorController.setExponentialProfile(OptionalDouble.empty(),
+                                                       OptionalDouble.empty(),
+                                                       Optional.of(Volts.of(dt.get())));
           }
         }
       }
@@ -353,27 +381,27 @@ public class SmartMotorControllerTelemetry
     /**
      * Mechanism upper limit
      */
-    MechanismUpperLimit("limits/Mechanism Upper Limit", false, false),
+    MechanismUpperLimit("limits/mechanism/upper", false, false),
     /**
      * Mechanism lower limit.
      */
-    MechanismLowerLimit("limits/Mechanism Lower Limit", false, false),
+    MechanismLowerLimit("limits/mechanism/lower", false, false),
     /**
      * Temperature limit if available.
      */
-    TemperatureLimit("limits/Temperature Limit", false, false),
+    TemperatureLimit("limits/temperature", false, false),
     /**
      * Velocity control currently getting used.
      */
-    VelocityControl("control/Velocity Control", false, false),
+    VelocityControl("control/closedloop/velocity", false, false),
     /**
      * Elevator feedforward currently getting used.
      */
-    ElevatorFeedForward("control/Elevator Feedforward", false, false),
+    ElevatorFeedForward("control/feedforward/elevator", false, false),
     /**
      * Arm feedforward currently getting used.
      */
-    ArmFeedForward("control/Arm Feedforward", false, false),
+    ArmFeedForward("control/feedforward/arm", false, false),
     /**
      * Simple motor feedforward currently getting used.
      */
@@ -381,7 +409,7 @@ public class SmartMotorControllerTelemetry
     /**
      * Motion profile currently getting used.
      */
-    MotionProfile("control/Motion Profile", false, false),
+    MotionProfile("control/closedloop/profiled", false, false),
     /**
      * Motor inversion.
      */
@@ -437,13 +465,40 @@ public class SmartMotorControllerTelemetry
   public enum DoubleTelemetryField
   {
     /**
-     * Motion profile maximum velocity, could be in MPS or RPS
+     * Exponential profile kV
      */
-    MotionProfileMaxVelocity("closedloop/motionprofile/maxVelocity", 0, true, "tunable_velocity"),
+    ExponentialProfileKV("closedloop/motionprofile/kV", 0, true, "none"),
     /**
-     * Motion profile maximum accelerartion, could be in MPS^2 or RPS^2
+     * Exponential profile kA
      */
-    MotionProfileMaxAcceleration("closedloop/motionprofile/maxAcceleration", 0, true, "tunable_acceleration"),
+    ExponentialProfileKA("closedloop/motionprofile/kA", 0, true, "none"),
+    /**
+     * Exponential profile maxInput
+     */
+    ExponentialProfileMaxInput("closedloop/motionprofile/maxInput", 12, true, "volts"),
+    /**
+     * Motion profile maximum velocity, could be in MPS or RPM
+     */
+    TrapezoidalProfileMaxVelocity("closedloop/motionprofile/maxVelocity", 0, true, "tunable_velocity"),
+    /**
+     * Motion profile maximum accelerartion, could be in MPS^2 or RPM/s
+     */
+    TrapezoidalProfileMaxAcceleration("closedloop/motionprofile/maxAcceleration", 0, true, "tunable_acceleration"),
+    /**
+     * Trapezoidal profile maximum jerk, could be in MPS^3 or RPM/s^2
+     */
+    TrapezoidalProfileMaxJerk("closedloop/motionprofile/maxJerk",
+                              0,
+                              true,
+                              "rotations_per_minute_per_second_per_second"),
+    /**
+     * Closed loop controller slot.
+     */
+    TunableClosedLoopControllerSlot("closedloop/slot", 0, true, "none"),
+    /**
+     * Active closed loop controller slot.
+     */
+    ActiveClosedLoopControllerSlot("closedloop/slot", 0, false, "none"),
     /**
      * kS
      */
@@ -521,6 +576,10 @@ public class SmartMotorControllerTelemetry
      */
     MeasurementVelocity("measurement/velocity", 0, false, "meters_per_second"),
     /**
+     * Measurement acceleration.
+     */
+    MeasurementAcceleration("measurement/acceleration", 0, false, "meters_per_second_per_second"),
+    /**
      * Measurement lower limit.
      */
     MeasurementLowerLimit("measurement/limit/lower", 0, true, "meters"),
@@ -537,6 +596,10 @@ public class SmartMotorControllerTelemetry
      */
     MechanismVelocity("mechanism/velocity", 0, false, "rotations_per_second"),
     /**
+     * Mechanism acceleration in rotations per second per second.
+     */
+    MechanismAcceleration("mechanism/acceleration", 0, false, "rotations_per_second_per_second"),
+    /**
      * Mechanism lower limit in rotations.
      */
     MechanismLowerLimit("mechanism/limit/lower", 0, true, "degrees"),
@@ -552,6 +615,14 @@ public class SmartMotorControllerTelemetry
      * Rotor velocity in rotations.
      */
     RotorVelocity("rotor/velocity", 0, false, "rotations_per_second"),
+    /**
+     * External encoder position in rotations.
+     */
+    ExternalEncoderPosition("externalencoder/position", 0, false, "rotations"),
+    /**
+     * External encoder velocity in rotations per second.
+     */
+    ExternalEncoderVelocity("externalencoder/velocity", 0, false, "rotations_per_second"),
     /**
      * Closed loop dutycyle ramp rate.
      */

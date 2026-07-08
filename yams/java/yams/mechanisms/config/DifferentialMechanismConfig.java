@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.config;
 
 import static edu.wpi.first.units.Units.KilogramSquareMeters;
@@ -17,6 +20,7 @@ import java.util.function.Supplier;
 import yams.exceptions.DifferentialMechanismConfigurationException;
 import yams.gearing.GearBox;
 import yams.gearing.MechanismGearing;
+import yams.mechanisms.positional.Pivot;
 import yams.mechanisms.config.MechanismPositionConfig.Plane;
 import yams.mechanisms.positional.DifferentialMechanism;
 import yams.motorcontrollers.SmartMotorController;
@@ -24,11 +28,30 @@ import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
 
 /**
- * Differential Mechanism config.
+ * Configuration for a {@link DifferentialMechanism} driven by two coordinated motors working
+ * differentially. In a differential mechanism the sum and difference of the two motor outputs
+ * independently control two separate degrees of freedom — commonly referred to as <b>tilt</b>
+ * (the average of both motors) and <b>twist</b> (half the difference between the two motors).
+ *
+ * <p>This class is a builder that collects every setting needed before the mechanism is
+ * constructed. All {@code with*()} methods return {@code this} so calls can be chained.</p>
+ *
+ * <h2>Builder Example</h2>
+ * <pre>{@code
+ * // leftSMC / rightSMC are SmartMotorController instances already configured
+ * // with gearing from the motor to the differential bevel gears.
+ * DifferentialMechanismConfig config = new DifferentialMechanismConfig(leftSMC, rightSMC)
+ *     .withStartingPosition(Degrees.of(45), Degrees.of(0))  // tilt=45°, twist=0°
+ *     .withLength(Inches.of(18))
+ *     .withMOI(Inches.of(18), Pounds.of(3))
+ *     .withTelemetry("DifferentialWrist", TelemetryVerbosity.HIGH)
+ *     .withSimColor(new Color8Bit(Color.kOrange));
+ *
+ * DifferentialMechanism wrist = new DifferentialMechanism(config);
+ * }</pre>
  */
 public class DifferentialMechanismConfig
 {
-
   /**
    * {@link SmartMotorController} for the {@link DifferentialMechanism}
    */
@@ -37,11 +60,6 @@ public class DifferentialMechanismConfig
    * {@link SmartMotorController} for the {@link DifferentialMechanism}
    */
   private Optional<SmartMotorController>         rightMotorController = Optional.empty();
-  /**
-   * The network root of the mechanism (Optional).
-   */
-  @Deprecated
-  protected     Optional<String>             networkRoot             = Optional.empty();
   /**
    * Telemetry name.
    */
@@ -95,7 +113,7 @@ public class DifferentialMechanismConfig
    * @param left  Left {@link SmartMotorController} configured with the gearing up to the tilt movement if
    *              synchronized.
    * @param right Right {@link SmartMotorController} configured with the gearing up to the tilt movement if
-   *              syncrhonized.
+   *              synchronized.
    */
   public DifferentialMechanismConfig(SmartMotorController left, SmartMotorController right)
   {
@@ -133,7 +151,6 @@ public class DifferentialMechanismConfig
     this.length = cfg.length;
     this.simColor = cfg.simColor;
     this.mechanismPositionConfig = cfg.mechanismPositionConfig;
-    this.networkRoot = cfg.networkRoot;
   }
 
   @Override
@@ -241,21 +258,6 @@ public class DifferentialMechanismConfig
    * Configure the MOI directly instead of estimating it with the length and mass of the {@link DifferentialMechanism}
    * for simulation.
    *
-   * @param MOI Moment of Inertia of the {@link DifferentialMechanism}. In {@link edu.wpi.first.units.Units#KilogramSquareMeters}
-   * @return {@link DifferentialMechanismConfig} for chaining.
-   * @implNote Please use {@link #withMOI(MomentOfInertia)} instead. Default unit is KilogramSquareMeters
-   */
-  @Deprecated(since = "2026", forRemoval = true)
-  public DifferentialMechanismConfig withMOI(double MOI)
-  {
-    this.MOI = OptionalDouble.of(MOI);
-    return this;
-  }
-
-  /**
-   * Configure the MOI directly instead of estimating it with the length and mass of the {@link DifferentialMechanism}
-   * for simulation.
-   *
    * @param MOI Moment of Inertia of the {@link DifferentialMechanism}
    * @return {@link DifferentialMechanismConfig} for chaining.
    */
@@ -293,7 +295,7 @@ public class DifferentialMechanismConfig
   }
 
   /**
-   * Configure telemetry for the {@link yams.mechanisms.positional.Pivot} mechanism.
+   * Configure telemetry for the {@link Pivot} mechanism.
    *
    * @param telemetryName      Telemetry NetworkTable name to appear under "SmartDashboard/"
    * @param telemetryVerbosity Telemetry verbosity to apply.
@@ -319,7 +321,7 @@ public class DifferentialMechanismConfig
   }
 
   /**
-   * Aet the gearing for the differential mechanism if it isnt 1:1. Separate from gearing to the bevel gears.
+   * Set the gearing for the differential mechanism if it isn't 1:1. Separate from gearing to the bevel gears.
    *
    * @param gearing Gearing for the bevel gears.
    * @return {@link DifferentialMechanismConfig} for chaining
@@ -416,9 +418,9 @@ public class DifferentialMechanismConfig
 
 
   /**
-   * Get the telemetry verbosity of the {@link yams.mechanisms.positional.Pivot}
+   * Get the telemetry verbosity of the {@link Pivot}
    *
-   * @return {@link TelemetryVerbosity} of the {@link yams.mechanisms.positional.Pivot}
+   * @return {@link TelemetryVerbosity} of the {@link Pivot}
    */
   public Optional<TelemetryVerbosity> getTelemetryVerbosity()
   {
@@ -426,7 +428,7 @@ public class DifferentialMechanismConfig
   }
 
   /**
-   * Network Tables name for the {@link yams.mechanisms.positional.Pivot}
+   * Network Tables name for the {@link Pivot}
    *
    * @return Network Tables name.
    */
@@ -556,14 +558,4 @@ public class DifferentialMechanismConfig
     return mechanismPositionConfig;
   }
 
-  /**
-   * Get the network root of the mechanism.
-   *
-   * @return Optional containing the network root if set, otherwise an empty Optional.
-   */
-  @Deprecated
-  public Optional<String> getNetworkRoot()
-  {
-    return networkRoot;
-  }
 }

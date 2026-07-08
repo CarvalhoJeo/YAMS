@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechs;
 
 import static edu.wpi.first.units.Units.Amps;
@@ -15,9 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.ctre.phoenix6.hardware.TalonFX;
 import com.ctre.phoenix6.hardware.TalonFXS;
 import com.revrobotics.spark.SparkFlex;
-import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.SparkMax;
-import com.thethriftybot.devices.ThriftyNova;
 import edu.wpi.first.math.controller.ElevatorFeedforward;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.units.measure.Distance;
@@ -42,25 +43,27 @@ import yams.helpers.TestWithScheduler;
 import yams.mechanisms.config.ElevatorConfig;
 import yams.mechanisms.positional.Elevator;
 import yams.motorcontrollers.SmartMotorController;
+import yams.motorcontrollers.SmartMotorControllerCommandRegistry;
 import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.SmartMotorControllerConfig.ControlMode;
 import yams.motorcontrollers.SmartMotorControllerConfig.MotorMode;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
+import yams.helpers.DeviceCreator;
 import yams.motorcontrollers.local.SparkWrapper;
 import yams.motorcontrollers.remote.TalonFXSWrapper;
 import yams.motorcontrollers.remote.TalonFXWrapper;
 
 public class ElevatorTest
 {
-
   private static SmartMotorControllerConfig createSMCConfig()
   {
     return new SmartMotorControllerConfig()
         .withMechanismCircumference(Meters.of(Inches.of(0.25).in(Meters) * 22))
         .withClosedLoopController(4, 0, 0)
-        .withSoftLimit(Meters.of(0), Meters.of(5))
+        .withSoftLimits(Meters.of(0), Meters.of(5))
         .withGearing(new MechanismGearing(GearBox.fromReductionStages(3, 4)))
         .withIdleMode(MotorMode.BRAKE)
+        .withStartingPosition(Meters.of(0))
 //        .withTelemetry("ElevatorMotor", TelemetryVerbosity.HIGH)
         .withStatorCurrentLimit(Amps.of(40))
 //      .withVoltageCompensation(Volts.of(12))
@@ -73,12 +76,11 @@ public class ElevatorTest
 
   private static Elevator createElevator(SmartMotorController smc)
   {
-    ElevatorConfig config = new ElevatorConfig(smc)
-        .withStartingHeight(Meters.of(0))
+    ElevatorConfig config = new ElevatorConfig()
         .withHardLimits(Meters.of(0), Meters.of(3))
 //      .withTelemetry("Elevator", TelemetryVerbosity.HIGH)
-        .withMass(Pounds.of(16));
-    Elevator                          elevator = new Elevator(config);
+        .withCarriageWeight(Pounds.of(16));
+    Elevator                          elevator = new Elevator(config, smc);
     SmartMotorControllerTestSubsystem subsys   = (SmartMotorControllerTestSubsystem) smc.getConfig().getSubsystem();
     subsys.smc = smc;
     subsys.mechSimPeriodic = elevator::simIterate;
@@ -118,11 +120,11 @@ public class ElevatorTest
         case 2: smcConfig = addExponentialProfile(smcConfig);
           break;
       }
-      SparkMax  smax  = new SparkMax(10 + offset + i, MotorType.kBrushless);
-      SparkFlex sflex = new SparkFlex(20 + offset + i, MotorType.kBrushless);
+      SparkMax  smax  = DeviceCreator.createSparkMax();
+      SparkFlex sflex = DeviceCreator.createSparkFlex();
 //    ThriftyNova tnova = new ThriftyNova(30 + offset+i);
-      TalonFXS tfxs = new TalonFXS(40 + offset + i);
-      TalonFX  tfx  = new TalonFX(50 + offset + i);
+      TalonFXS tfxs = DeviceCreator.createTalonFXS();
+      TalonFX  tfx  = DeviceCreator.createTalonFX();
       smcList.add(Arguments.of(setupTestSubsystem(new SparkWrapper(smax,
                                                                    DCMotor.getNEO(1),
                                                                    smcConfig.clone()
@@ -164,6 +166,7 @@ public class ElevatorTest
 
   private static void closeSMC(SmartMotorController smc)
   {
+    SmartMotorControllerCommandRegistry.removeCommands(smc.getConfig().getSubsystem());
     CommandScheduler.getInstance().unregisterSubsystem((SmartMotorControllerTestSubsystem) smc.getConfig()
                                                                                               .getSubsystem());
     ((SmartMotorControllerTestSubsystem) smc.getConfig().getSubsystem()).close();
@@ -179,9 +182,6 @@ public class ElevatorTest
     } else if (motorController instanceof SparkFlex)
     {
       ((SparkFlex) motorController).close();
-    } else if (motorController instanceof ThriftyNova)
-    {
-//      ((ThriftyNova)motorController).close();
     } else if (motorController instanceof TalonFXS)
     {
       ((TalonFXS) motorController).close();

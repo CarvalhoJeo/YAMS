@@ -1,13 +1,35 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.math;
 
 import yams.exceptions.NoStagesGivenException;
 
 /**
  * SmartMath class to handle math operations.
+ *
+ * <p>Provides static utility methods for common FRC drivetrain and gearing calculations:
+ * <ul>
+ *   <li><b>sensorToMechanismRatio</b> — multiplies a chain of gear-stage ratios to produce the
+ *       overall sensor-to-mechanism ratio used by motor controller configuration.</li>
+ *   <li><b>gearBox</b> — multiplies a chain of gear-stage ratios to produce the rotor-to-mechanism
+ *       gear ratio (MECHANISM_ROTATIONS / ROTOR_ROTATIONS).</li>
+ * </ul>
+ *
+ * <h2>Example</h2>
+ * <pre>{@code
+ * // Single-stage 10:1 reduction — sensor on motor shaft
+ * double sensorRatio = SmartMath.sensorToMechanismRatio(10.0);
+ *
+ * // Two-stage gearbox: 5:1 first stage, 4:1 second stage → overall 20:1
+ * double gearRatio = SmartMath.gearBox(5.0, 4.0);
+ *
+ * // Three-stage gearbox: 3:1, 4:1, 5:1 → overall 60:1
+ * double complexGearRatio = SmartMath.gearBox(3.0, 4.0, 5.0);
+ * }</pre>
  */
 public class SmartMath
 {
-
   /**
    * Create the sensor to mechanism ratio.
    *

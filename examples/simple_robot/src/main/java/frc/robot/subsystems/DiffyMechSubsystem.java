@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package frc.robot.subsystems;
 
 import com.revrobotics.spark.SparkLowLevel;
@@ -16,15 +19,14 @@ import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.local.SparkWrapper;
 
 import static edu.wpi.first.units.Units.*;
-import static yams.mechanisms.SmartMechanism.gearbox;
-import static yams.mechanisms.SmartMechanism.gearing;
 
 public class DiffyMechSubsystem extends SubsystemBase
 {
   private final SparkMax                   leftMotor  = new SparkMax(1, SparkLowLevel.MotorType.kBrushless);
   private final SmartMotorControllerConfig leftConfig = new SmartMotorControllerConfig(this)
-          .withClosedLoopController(16, 0, 0, DegreesPerSecond.of(180), DegreesPerSecondPerSecond.of(90))
-          //.withSoftLimit(Degrees.of(-30), Degrees.of(100))
+          .withClosedLoopController(16, 0, 0)
+    .withTrapezoidalProfile(DegreesPerSecond.of(180), DegreesPerSecondPerSecond.of(90))
+          //.withSoftLimits(Degrees.of(-30), Degrees.of(100))
           .withGearing(new MechanismGearing(GearBox.fromReductionStages(3, 4, 5)))
 //      .withExternalEncoder(armMotor.getAbsoluteEncoder())
           .withIdleMode(SmartMotorControllerConfig.MotorMode.BRAKE)
@@ -40,8 +42,9 @@ public class DiffyMechSubsystem extends SubsystemBase
           leftConfig);
   private final SparkMax                   rightMotor  = new SparkMax(2, SparkLowLevel.MotorType.kBrushless);
   private final SmartMotorControllerConfig rightConfig = new SmartMotorControllerConfig(this)
-          .withClosedLoopController(16, 0, 0, DegreesPerSecond.of(180), DegreesPerSecondPerSecond.of(90))
-          //.withSoftLimit(Degrees.of(-30), Degrees.of(100))
+          .withClosedLoopController(16, 0, 0)
+    .withTrapezoidalProfile(DegreesPerSecond.of(180), DegreesPerSecondPerSecond.of(90))
+          //.withSoftLimits(Degrees.of(-30), Degrees.of(100))
           .withGearing(new MechanismGearing(GearBox.fromReductionStages(3, 4, 5)))
 //      .withExternalEncoder(armMotor.getAbsoluteEncoder())
           .withIdleMode(SmartMotorControllerConfig.MotorMode.BRAKE)

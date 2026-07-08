@@ -1,10 +1,12 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.config;
 
 import static edu.wpi.first.units.Units.KilogramSquareMeters;
 import static edu.wpi.first.units.Units.Kilograms;
 import static edu.wpi.first.units.Units.Meters;
 import static edu.wpi.first.units.Units.MetersPerSecond;
-import static edu.wpi.first.units.Units.RPM;
 import static edu.wpi.first.units.Units.RotationsPerSecond;
 import static edu.wpi.first.units.Units.Second;
 
@@ -20,6 +22,7 @@ import edu.wpi.first.wpilibj.util.Color8Bit;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import yams.exceptions.FlyWheelConfigurationException;
+import yams.mechanisms.positional.Pivot;
 import yams.mechanisms.velocity.FlyWheel;
 import yams.motorcontrollers.SmartMotorController;
 import yams.motorcontrollers.SmartMotorControllerConfig;
@@ -27,26 +30,29 @@ import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
 
 /**
  * FlyWheel configuration class.
+ *
+ * <h2>Configuration Example</h2>
+ * <pre>{@code
+ * // 1. Build the motor config with kV and kS feedforward (critical for velocity mechanisms)
+ * SmartMotorControllerConfig motorConfig = new SmartMotorControllerConfig()
+ *     .withFeedforward(new SimpleMotorFeedforward(0.15, 0.12))   // kS=0.15, kV=0.12 — kV dominates at steady-state RPM
+ *     .withClosedLoopController(0.0005, 0.0, 0.0) // kP
+ *     .withTelemetry("Shooter", TelemetryVerbosity.HIGH);
+ *
+ * // 2. Create a TalonFXWrapper for a Kraken X60 on CAN ID 1
+ * SmartMotorController motor = new TalonFXWrapper(new TalonFX(1), DCMotor.getKrakenX60(1), motorConfig);
+ *
+ * // 3. Assemble the FlyWheelConfig and mechanism
+ * FlyWheelConfig config = new FlyWheelConfig()
+ *     .withDiameter(Inches.of(4))
+ *     .withSpeedometerSimulation(RPM.of(6000))  // optional: sim speedometer up to 6000 RPM
+ *     .withTelemetry("Shooter", TelemetryVerbosity.HIGH);
+ *
+ * FlyWheel flywheel = new FlyWheel(config, motor);
+ * }</pre>
  */
 public class FlyWheelConfig
 {
-
-  /**
-   * {@link SmartMotorController} for the {@link FlyWheel}
-   */
-  private   Optional<SmartMotorController> motor;
-  /**
-   * The network root of the mechanism (Optional).
-   */
-  protected Optional<String>               networkTableName        = Optional.empty();
-  /**
-   * Minimum velocity of the shooter.
-   */
-  private   Optional<AngularVelocity>      minVelocity             = Optional.empty();
-  /**
-   * Maximum velocity of the shooter.
-   */
-  private   Optional<AngularVelocity>      maxVelocity             = Optional.empty();
   /**
    * Telemetry name.
    */
@@ -60,19 +66,11 @@ public class FlyWheelConfig
    */
   private Optional<Distance>           diameter           = Optional.empty();
   /**
-   * {@link FlyWheel} mass for simulation.
-   */
-  private Optional<Mass>               weight             = Optional.empty();
-  /**
-   * {@link FlyWheel} MOI from CAD software. If not given estimated with length and weight.
-   */
-  private   OptionalDouble                 moi                     = OptionalDouble.empty();
-  /**
    * Sim color value
    */
   private   Color8Bit                      simColor                = new Color8Bit(Color.kOrange);
   /**
-   * Mechanism position configuration for the {@link yams.mechanisms.positional.Pivot} (Optional).
+   * Mechanism position configuration for the {@link Pivot} (Optional).
    */
   private   MechanismPositionConfig        mechanismPositionConfig = new MechanismPositionConfig();
   /**
@@ -85,34 +83,17 @@ public class FlyWheelConfig
   private   Optional<AngularVelocity>      speedometerMaxVelocity  = Optional.empty();
 
   /**
-   * Arm Configuration class
+   * FlyWheel Configuration class
    *
-   * @param motorController Primary {@link SmartMotorController} for the {@link FlyWheel}
    */
-  public FlyWheelConfig(SmartMotorController motorController)
-  {
-    motor = Optional.ofNullable(motorController);
-  }
-
-  /**
-   * FlyWheel configuration class.
-   *
-   * @implNote Required to call {@link #withSmartMotorController(SmartMotorController)} before this is used with an
-   * {@link FlyWheel}
-   */
-  public FlyWheelConfig() {}
+  public FlyWheelConfig()
+  {}
 
   private FlyWheelConfig(FlyWheelConfig cfg)
   {
-    this.motor = cfg.motor;
-    this.networkTableName = cfg.networkTableName;
-    this.minVelocity = cfg.minVelocity;
-    this.maxVelocity = cfg.maxVelocity;
     this.telemetryName = cfg.telemetryName;
     this.telemetryVerbosity = cfg.telemetryVerbosity;
     this.diameter = cfg.diameter;
-    this.weight = cfg.weight;
-    this.moi = cfg.moi;
     this.simColor = cfg.simColor;
     this.mechanismPositionConfig = cfg.mechanismPositionConfig;
     this.useSpeedometer = cfg.useSpeedometer;
@@ -123,82 +104,6 @@ public class FlyWheelConfig
   public FlyWheelConfig clone()
   {
     return new FlyWheelConfig(this);
-  }
-
-  /**
-   * Set the {@link SmartMotorController} for the {@link FlyWheel}
-   *
-   * @param motorController Primary {@link SmartMotorController} for the {@link FlyWheel}
-   * @return {@link FlyWheelConfig} for chaining.
-   */
-  public FlyWheelConfig withSmartMotorController(SmartMotorController motorController)
-  {
-    if (motor.isPresent())
-    {
-      throw new FlyWheelConfigurationException("FlyWheel SmartMotorController already set!",
-                                               "Flywheel cannot be set",
-                                               "withSmartMotorController(SmartMotorController)");
-    }
-    motor = Optional.of(motorController);
-    moi.ifPresent(this::withMOI);
-    return this;
-  }
-
-  /**
-   * Set the minimum velocity of the shooter. Also updates the speedometer simulation max velocity
-   *
-   * @param speed Minimum velocity of the shooter.
-   * @return {@link FlyWheelConfig} for chaining
-   */
-  public FlyWheelConfig withLowerSoftLimit(AngularVelocity speed)
-  {
-    minVelocity = Optional.ofNullable(speed);
-    // Set the speedometer max to the highest absolute value of the max and min Velocity
-    // If the max is less than the min, set the speedometer max to the min
-    speedometerMaxVelocity = Optional.ofNullable(
-        maxVelocity.orElse(RPM.of(0)).abs(RPM) > (minVelocity.orElse(RPM.of(0))).abs(RPM)
-        ? RPM.of(maxVelocity.orElse(RPM.of(0)).abs(RPM))
-        // The orElse here is just to deal with the Optional, it will likely never be 0
-        : RPM.of(minVelocity.orElse(RPM.of(0))
-                            .abs(RPM))); // The orElse here is just to deal with the Optional, it will likely never be 0
-    return this;
-  }
-
-  /**
-   * Set the maximum velocity of the shooter. Also updates the speedometer simulation max velocity
-   *
-   * @param speed Maximum velocity of the shooter.
-   * @return {@link FlyWheelConfig} for chaining.
-   */
-  public FlyWheelConfig withUpperSoftLimit(AngularVelocity speed)
-  {
-    maxVelocity = Optional.ofNullable(speed);
-    // Set the speedometer max to the highest absolute value of the max and min Velocity
-    // If the max is less than the min, set the speedometer max to the min
-    speedometerMaxVelocity = Optional.ofNullable(
-        maxVelocity.orElse(RPM.of(0)).abs(RPM) > (minVelocity.orElse(RPM.of(0))).abs(RPM)
-        ? RPM.of(maxVelocity.orElse(RPM.of(0)).abs(RPM))
-        // The orElse here is just to deal with the Optional, it will likely never be 0
-        : RPM.of(minVelocity.orElse(RPM.of(0))
-                            .abs(RPM))); // The orElse here is just to deal with the Optional, it will likely never be 0
-    return this;
-  }
-
-  /**
-   * Set the shooter soft limits.
-   *
-   * @param low  Minimum velocity of the shooter.
-   * @param high Maximum velocity of the shooter.
-   * @return {@link FlyWheelConfig} for chaining.
-   */
-  public FlyWheelConfig withSoftLimit(AngularVelocity low, AngularVelocity high)
-  {
-    minVelocity = Optional.ofNullable(low);
-    maxVelocity = Optional.ofNullable(high);
-    // Set the speedometer max to the highest absolute value of the two
-    speedometerMaxVelocity = Optional.ofNullable(
-        high.abs(RPM) > low.abs(RPM) ? RPM.of(high.abs(RPM)) : RPM.of(low.abs(RPM)));
-    return this;
   }
 
   /**
@@ -231,7 +136,7 @@ public class FlyWheelConfig
     {
       throw new FlyWheelConfigurationException("Speedometer max velocity is not set.",
                                                "Cannot use speedometer simulation!",
-                                               "Set it with useSpeedometerSimulation(AngularVelocity) or withSoftLimit(AngularVelocity, AngularVelocity)");
+                                               "Set it with withSpeedometerSimulation(AngularVelocity)");
     }
     this.useSpeedometer = true;
     return this;
@@ -291,51 +196,6 @@ public class FlyWheelConfig
   }
 
   /**
-   * Configure the MOI directly instead of estimating it with the length and mass of the {@link FlyWheel} for
-   * simulation.
-   *
-   * @param MOI Moment of Inertia of the {@link FlyWheel}. in {@link Units#KilogramSquareMeters}
-   * @return {@link FlyWheelConfig} for chaining.
-   * @implNote Please use {@link #withMOI(MomentOfInertia)} instead. Default unit is KilogramSquareMeters
-   */
-  @Deprecated(since = "2026", forRemoval = true)
-  public FlyWheelConfig withMOI(double MOI)
-  {
-    motor.ifPresent(motor -> motor.getConfig().withMomentOfInertia(KilogramSquareMeters.of(MOI)));
-    this.moi = OptionalDouble.of(MOI);
-    return this;
-  }
-
-  /**
-   * Configure the MOI directly instead of estimating it with the length and mass of the {@link FlyWheel} for
-   * simulation.
-   *
-   * @param MOI Moment of Inertia of the {@link FlyWheel}
-   * @return {@link FlyWheelConfig} for chaining.
-   */
-  public FlyWheelConfig withMOI(MomentOfInertia MOI)
-  {
-    motor.ifPresent(motor -> motor.getConfig().withMomentOfInertia(MOI));
-    this.moi = OptionalDouble.of(MOI.in(KilogramSquareMeters));
-    return this;
-  }
-
-  /**
-   * Configure the MOI directly instead of estimating it with the length and mass of the {@link FlyWheel} for
-   * simulation.
-   *
-   * @param length Length of the {@link FlyWheel}.
-   * @param weight Weight of the {@link FlyWheel}
-   * @return {@link FlyWheelConfig} for chaining.
-   */
-  public FlyWheelConfig withMOI(Distance length, Mass weight)
-  {
-    motor.ifPresent(motor -> motor.getConfig().withMomentOfInertia(length, weight));
-    this.moi = OptionalDouble.of(SingleJointedArmSim.estimateMOI(length.in(Meters), weight.in(Kilograms)));
-    return this;
-  }
-
-  /**
    * Configure the {@link FlyWheel}s diameter for simulation.
    *
    * @param distance Length of the {@link FlyWheel}.
@@ -344,18 +204,6 @@ public class FlyWheelConfig
   public FlyWheelConfig withDiameter(Distance distance)
   {
     this.diameter = Optional.ofNullable(distance);
-    return this;
-  }
-
-  /**
-   * Configure the {@link FlyWheel}s {@link Mass} for simulation.
-   *
-   * @param mass {@link Mass} of the {@link FlyWheel}
-   * @return {@link FlyWheelConfig} for chaining.
-   */
-  public FlyWheelConfig withMass(Mass mass)
-  {
-    this.weight = Optional.ofNullable(mass);
     return this;
   }
 
@@ -384,63 +232,14 @@ public class FlyWheelConfig
     this.telemetryVerbosity = Optional.ofNullable(telemetryVerbosity);
     return this;
   }
-
-  /**
-   * Configure telemetry for the {@link FlyWheel} mechanism.
-   *
-   * @param networkRoot        Telemetry NetworkTable
-   * @param telemetryName      Telemetry NetworkTable name to appear under _networkTableName_
-   * @param telemetryVerbosity Telemetry verbosity to apply.
-   * @return {@link FlyWheelConfig} for chaining.
-   */
-  @Deprecated
-  public FlyWheelConfig withTelemetry(String networkRoot, String telemetryName, TelemetryVerbosity telemetryVerbosity)
-  {
-    this.networkTableName = Optional.ofNullable(networkRoot);
-    this.telemetryName = Optional.ofNullable(telemetryName);
-    this.telemetryVerbosity = Optional.ofNullable(telemetryVerbosity);
-    return this;
-  }
-
-
-  /**
-   * Apply config changes from this class to the {@link SmartMotorController}
-   *
-   * @return {@link SmartMotorController#applyConfig(SmartMotorControllerConfig)} result.
-   */
-  public boolean applyConfig()
-  {
-    return motor.orElseThrow().applyConfig(motor.orElseThrow().getConfig());
-  }
-
   /**
    * Get the Length of the {@link FlyWheel}
    *
-   * @return {@link Distance} of the {@link FlyWheel} or an empty {@link Optional} if not set..
+   * @return {@link Distance} of the {@link FlyWheel} or an empty {@link Optional} if not set.
    */
   public Optional<Distance> getDiameter()
   {
     return diameter;
-  }
-
-  /**
-   * Get the moment of inertia for the {@link FlyWheel} simulation.
-   *
-   * @return Moment of Inertia.
-   */
-  public double getMOI()
-  {
-    if (moi.isPresent())
-    {
-      return moi.getAsDouble();
-    }
-    if (diameter.isPresent() && weight.isPresent())
-    {
-      return SingleJointedArmSim.estimateMOI(diameter.get().in(Units.Meters), weight.get().in(Units.Kilograms));
-    }
-    throw new FlyWheelConfigurationException("FlyWheel diameter and weight or MOI must be set!",
-                                             "Cannot get the MOI!",
-                                             "withDiameter(Distance).withMass(Mass) OR FlyWheelConfig.withMOI()");
   }
 
   /**
@@ -454,26 +253,6 @@ public class FlyWheelConfig
   }
 
   /**
-   * Get the upper soft limit for the shooter.
-   *
-   * @return Maximum velocity of the shooter.
-   */
-  public Optional<AngularVelocity> getUpperSoftLimit()
-  {
-    return maxVelocity;
-  }
-
-  /**
-   * Get the lower soft limit of the shooter.
-   *
-   * @return Minimum velocity of the shooter.
-   */
-  public Optional<AngularVelocity> getLowerSoftLimit()
-  {
-    return minVelocity;
-  }
-
-  /**
    * Network Tables name for the {@link FlyWheel}
    *
    * @return Network Tables name.
@@ -481,17 +260,6 @@ public class FlyWheelConfig
   public Optional<String> getTelemetryName()
   {
     return telemetryName;
-  }
-
-
-  /**
-   * Get the {@link SmartMotorController} of the {@link FlyWheel}
-   *
-   * @return {@link SmartMotorController} for the {@link FlyWheel}
-   */
-  public SmartMotorController getMotor()
-  {
-    return motor.orElseThrow();
   }
 
   /**
@@ -513,17 +281,6 @@ public class FlyWheelConfig
   public MechanismPositionConfig getMechanismPositionConfig()
   {
     return mechanismPositionConfig;
-  }
-
-  /**
-   * Get the telemetry network subtable of the mechanism.
-   *
-   * @return Optional containing the telemetry network subtable if set, otherwise an empty Optional.
-   */
-  @Deprecated
-  public Optional<String> getTelemetryNetworkTableName()
-  {
-    return networkTableName;
   }
 
   /**

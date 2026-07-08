@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.motorcontrollers.local;
 
 import static edu.wpi.first.units.Units.Amps;
@@ -5,6 +8,7 @@ import static edu.wpi.first.units.Units.Celsius;
 import static edu.wpi.first.units.Units.Meters;
 import static edu.wpi.first.units.Units.MetersPerSecond;
 import static edu.wpi.first.units.Units.MetersPerSecondPerSecond;
+import static edu.wpi.first.units.Units.Microsecond;
 import static edu.wpi.first.units.Units.Milliseconds;
 import static edu.wpi.first.units.Units.RPM;
 import static edu.wpi.first.units.Units.Rotations;
@@ -42,7 +46,7 @@ import edu.wpi.first.math.system.plant.LinearSystemId;
 import edu.wpi.first.math.trajectory.ExponentialProfile;
 import edu.wpi.first.math.trajectory.TrapezoidProfile;
 import edu.wpi.first.math.trajectory.TrapezoidProfile.Constraints;
-import edu.wpi.first.units.VoltageUnit;
+import edu.wpi.first.units.AngularAccelerationUnit;
 import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.units.measure.AngularAcceleration;
 import edu.wpi.first.units.measure.AngularVelocity;
@@ -59,11 +63,13 @@ import edu.wpi.first.wpilibj.Notifier;
 import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.simulation.DCMotorSim;
-import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Config;
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalDouble;
 import java.util.function.Supplier;
 import yams.exceptions.SmartMotorControllerConfigurationException;
+import yams.gearing.MechanismGearing;
+import yams.math.DerivativeTimeFilter;
 import yams.motorcontrollers.SmartMotorController;
 import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.SmartMotorControllerConfig.ControlMode;
@@ -74,18 +80,31 @@ import yams.telemetry.SmartMotorControllerTelemetry.DoubleTelemetryField;
 
 /**
  * Spark wrapper for REV Spark Motor controllers.
+ *
+ * <p><b>External encoder discontinuity point support (SparkAbsoluteEncoder):</b>
+ * <ul>
+ *   <li>{@code 0.5} rotations — sensor range is [-0.5, 0.5), {@code zeroCentered = true}</li>
+ *   <li>{@code 1.0} rotations — sensor range is [0, 1), {@code zeroCentered = false}</li>
+ * </ul>
+ * A discontinuity point <b>must</b> be configured via
+ * {@link yams.motorcontrollers.SmartMotorControllerConfig#withExternalEncoderDiscontinuityPoint}
+ * whenever a {@link com.revrobotics.spark.SparkAbsoluteEncoder} is used as the external encoder.
+ *
+ * <h2>Example</h2>
+ * <pre>{@code
+ * // Configure and create a SPARK MAX (NEO motor) on CAN ID 3
+ * SmartMotorControllerConfig config = new SmartMotorControllerConfig()
+ *     .withMotorInverted(false)
+ *     .withStatorCurrentLimit(Amps.of(40))
+ *     .withClosedLoopController(0.2,0,0)
+ *     .withExternalEncoderDiscontinuityPoint(Rotations.of(0.5)); // required for SparkAbsoluteEncoder
+ * SmartMotorController motor = new SparkWrapper(
+ *     new SparkMax(3, MotorType.kBrushless), DCMotor.getNEO(1), config);
+ * Arm arm = new Arm(new ArmConfig(motor).withLength(Meters.of(0.6)));
+ * }</pre>
  */
 public class SparkWrapper extends SmartMotorController
 {
-
-  /**
-   * Spark configuration retry count.
-   */
-  private final int                               CONFIG_RETRIES            = 4;
-  /**
-   * Spark configuration retry delay.
-   */
-  private final double                            CONFIG_RETRY_DELAY        = Milliseconds.of(5).in(Seconds);
   /**
    * Spark motor controller
    */
@@ -137,7 +156,12 @@ public class SparkWrapper extends SmartMotorController
   /**
    * REV Closed loop slot.
    */
-  private final ClosedLoopSlot                    m_closedLoopSlot          = ClosedLoopSlot.kSlot0;
+  private ClosedLoopSlot       m_closedLoopSlot     = ClosedLoopSlot.kSlot0;
+  /**
+   * Acceleration filter.
+   */
+  private DerivativeTimeFilter m_accelerationFilter = new DerivativeTimeFilter(Milliseconds.of(
+      20));
 
   /**
    * Create a {@link SmartMotorController} from {@link SparkMax} or {@link SparkFlex}
@@ -204,13 +228,13 @@ public class SparkWrapper extends SmartMotorController
    */
   private boolean configureSpark(Supplier<REVLibError> config)
   {
-    for (int i = 0; i < CONFIG_RETRIES; i++)
+    for (int i = 0; i < 8; i++)
     {
       if (config.get() == REVLibError.kOk)
       {
         return true;
       }
-      Timer.delay(CONFIG_RETRY_DELAY);
+      Timer.delay(Milliseconds.of(1));
     }
     return false;
   }
@@ -292,6 +316,8 @@ public class SparkWrapper extends SmartMotorController
                                                                                        .in(RotationsPerSecond),
                                                                            controlLoop.in(Seconds)));
       });
+      // TODO: Uncomment after the 2026 season
+//      m_looseFollowers.ifPresent(smcs -> {for(var f : smcs){f.simIterate();}});
     }
   }
 
@@ -301,7 +327,8 @@ public class SparkWrapper extends SmartMotorController
     m_sparkBaseConfig.idleMode(mode == MotorMode.BRAKE ? IdleMode.kBrake : IdleMode.kCoast);
     configureSpark(() -> m_spark.configure(m_sparkBaseConfig,
                                            ResetMode.kNoResetSafeParameters,
-                                           PersistMode.kPersistParameters));
+                                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                                     : PersistMode.kPersistParameters));
   }
 
   @Override
@@ -341,12 +368,13 @@ public class SparkWrapper extends SmartMotorController
   @Override
   public void setPosition(Angle angle)
   {
+    setpointVelocity = Optional.empty();
     setpointPosition = Optional.ofNullable(angle);
     if (m_expoProfile.isEmpty() && m_lqr.isEmpty() && angle != null)
     {
-      m_sparkPidController.setSetpoint(angle.in(Rotations),
-                                       m_positionControlType,
-                                       m_closedLoopSlot);
+      configureSpark(() -> m_sparkPidController.setSetpoint(angle.in(Rotations),
+                                                            m_positionControlType,
+                                                            m_closedLoopSlot));
     }
     m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setPosition(angle);}});
   }
@@ -366,12 +394,13 @@ public class SparkWrapper extends SmartMotorController
   @Override
   public void setVelocity(AngularVelocity angularVelocity)
   {
+    setpointPosition = Optional.empty();
     setpointVelocity = Optional.ofNullable(angularVelocity);
     if (m_lqr.isEmpty() && angularVelocity != null)
     {
-      m_sparkPidController.setSetpoint(setpointVelocity.orElse(RPM.of(0)).in(RotationsPerSecond),
-                                       m_velocityControlType,
-                                       m_closedLoopSlot);
+      configureSpark(() -> m_sparkPidController.setSetpoint(setpointVelocity.orElse(RPM.of(0)).in(RotationsPerSecond),
+                                                            m_velocityControlType,
+                                                            m_closedLoopSlot));
     }
     m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setVelocity(angularVelocity);}});
   }
@@ -381,13 +410,20 @@ public class SparkWrapper extends SmartMotorController
   {
     config.resetValidationCheck();
 
+    for (int i = 0; i < 4; i++)
+    {
+      if (isMotor(m_motor, DCMotor.getMinion(i)))
+      {
+        m_sparkBaseConfig.advanceCommutation(120);
+      }
+    }
     if (m_spark.isFollower())
     {
       m_spark.pauseFollowerMode();
       m_sparkBaseConfig.disableFollowerMode();
     }
     m_lqr = config.getLQRClosedLoopController();
-    m_pid = config.getPID();
+    m_pid = config.getPID(m_slot);
     m_looseFollowers = config.getLooselyCoupledFollowers();
 
     // Handle motion profile
@@ -416,6 +452,7 @@ public class SparkWrapper extends SmartMotorController
     // Handle closed loop controller thread
     if (m_expoProfile.isPresent() || m_lqr.isPresent())
     {
+      System.err.println("====== Spark(" + m_spark.getDeviceId() + ") Using RIO Closed Loop Controller ======");
       iterateClosedLoopController();
 
       if (m_closedLoopControllerThread == null)
@@ -451,9 +488,9 @@ public class SparkWrapper extends SmartMotorController
     double velocityConversionFactor = config.getGearing().getRotorToMechanismRatio() / 60.0;
 
     // Set base config options
-    m_sparkBaseConfig.openLoopRampRate(config.getOpenLoopRampRate().in(Seconds))
-                     .closedLoopRampRate(config.getClosedLoopRampRate().in(Seconds))
-                     .inverted(config.getMotorInverted());
+    config.getOpenLoopRampRate().ifPresent(rate -> m_sparkBaseConfig.openLoopRampRate(rate.in(Seconds)));
+    config.getClosedLoopRampRate().ifPresent(rate -> m_sparkBaseConfig.closedLoopRampRate(rate.in(Seconds)));
+    config.getMotorInverted().ifPresent(m_sparkBaseConfig::inverted);
     m_sparkBaseConfig.encoder.positionConversionFactor(positionConversionFactor)
                              .velocityConversionFactor(velocityConversionFactor);
 
@@ -462,36 +499,40 @@ public class SparkWrapper extends SmartMotorController
 
     // Set PID
     m_sparkBaseConfig.closedLoop.feedbackSensor(FeedbackSensor.kPrimaryEncoder);
-    config.getPID().ifPresent(pidController -> {
-      m_sparkBaseConfig.closedLoop.pid(pidController.getP(),
-                                       pidController.getI(),
-                                       pidController.getD(),
-                                       m_closedLoopSlot);
-    });
+    for (var closedLoopControlSlot : ClosedLoopControllerSlot.values())
+    {
+      var sparkSlot = getSparkClosedLoopSlot(closedLoopControlSlot);
+      config.getPID(closedLoopControlSlot).ifPresent(pidController -> {
+        m_sparkBaseConfig.closedLoop.pid(pidController.getP(),
+                                         pidController.getI(),
+                                         pidController.getD(),
+                                         sparkSlot);
+      });
 
-    // Set feedforward values
-    config.getArmFeedforward().ifPresent(ff -> {
-      m_sparkBaseConfig.closedLoop.feedForward
-          .kS(ff.getKs())
-          .kV(ff.getKv())
-          .kA(ff.getKa())
-          .kCos(ff.getKg());
-    });
-    config.getElevatorFeedforward().ifPresent(ff -> {
-      m_sparkBaseConfig.closedLoop.feedForward
-          .kS(ff.getKs())
-          .kV(ff.getKv())
-          .kA(ff.getKa())
-          .kG(ff.getKg());
-    });
-    config.getSimpleFeedforward().ifPresent(ff -> {
-      m_sparkBaseConfig.closedLoop.feedForward
-          .kS(ff.getKs())
-          .kV(ff.getKv())
-          .kA(ff.getKa());
-    });
+      // Set feedforward values
+      config.getArmFeedforward(closedLoopControlSlot).ifPresent(ff -> {
+        m_sparkBaseConfig.closedLoop.feedForward
+            .kS(ff.getKs(), sparkSlot)
+            .kV(ff.getKv(), sparkSlot)
+            .kA(ff.getKa(), sparkSlot)
+            .kCos(ff.getKg(), sparkSlot);
+      });
+      config.getElevatorFeedforward(closedLoopControlSlot).ifPresent(ff -> {
+        m_sparkBaseConfig.closedLoop.feedForward
+            .kS(ff.getKs(), sparkSlot)
+            .kV(ff.getKv(), sparkSlot)
+            .kA(ff.getKa(), sparkSlot)
+            .kG(ff.getKg(), sparkSlot);
+      });
+      config.getSimpleFeedforward(closedLoopControlSlot).ifPresent(ff -> {
+        m_sparkBaseConfig.closedLoop.feedForward
+            .kS(ff.getKs(), sparkSlot)
+            .kV(ff.getKv(), sparkSlot)
+            .kA(ff.getKa(), sparkSlot);
+      });
+    }
 
-    // LQR Doesnt handle tolerances
+    // LQR doesn't handle tolerances
     if (m_lqr.isPresent() && config.getClosedLoopTolerance().isPresent())
     {
       throw new IllegalArgumentException("[Error] Closed loop tolerance is not supported in LQR mode.");
@@ -514,16 +555,18 @@ public class SparkWrapper extends SmartMotorController
 
     // Set Mechanism Limits
     config.getMechanismLowerLimit().ifPresent(lowerLimit -> {
-      m_sparkBaseConfig.softLimit.reverseSoftLimit(lowerLimit.in(Rotations)).reverseSoftLimitEnabled(true);
+      m_sparkBaseConfig.softLimit.reverseSoftLimit(lowerLimit.in(Rotations)).reverseSoftLimitEnabled(
+          config.getMotorControllerMode() == ControlMode.CLOSED_LOOP);
     });
     config.getMechanismUpperLimit().ifPresent(upperLimit -> {
-      m_sparkBaseConfig.softLimit.forwardSoftLimit(upperLimit.in(Rotations)).forwardSoftLimitEnabled(true);
+      m_sparkBaseConfig.softLimit.forwardSoftLimit(upperLimit.in(Rotations)).forwardSoftLimitEnabled(
+          config.getMotorControllerMode() == ControlMode.CLOSED_LOOP);
     });
 
     // Throw warning about supply stator limits on Spark's
     if (config.getSupplyStallCurrentLimit().isPresent())
     {
-      DriverStation.reportError("[WARNING] Supply stall currently not supported on Spark", true);
+      throw new SmartMotorControllerConfigurationException("Supply current limits are not supported on Sparks", "Supply current limit not set","withStatorCurrentLimit");
     }
     // Handle stator current limit.
     if (config.getStatorStallCurrentLimit().isPresent())
@@ -546,31 +589,45 @@ public class SparkWrapper extends SmartMotorController
       m_sparkRelativeEncoder.setPosition(config.getStartingPosition().get().in(Rotations));
     }
     // PID Wrapping
-    if (config.getMaxDiscontinuityPoint().isPresent())
+    if (config.getContinuousWrapping().isPresent() && config.getContinuousWrappingMin().isPresent())
     {
       m_sparkBaseConfig.closedLoop
-          .positionWrappingMaxInput(config.getMaxDiscontinuityPoint().get().in(Rotations))
+          .positionWrappingInputRange(config.getContinuousWrappingMin().get().in(Rotations),
+                                      config.getContinuousWrapping().get().in(Rotations))
+          .positionWrappingEnabled(true);
+    } else if (config.getContinuousWrapping().isPresent())
+    {
+      m_sparkBaseConfig.closedLoop
+          .positionWrappingMaxInput(config.getContinuousWrapping().get().in(Rotations))
           .positionWrappingEnabled(true);
     }
 
     // Setup external encoder.
     boolean useExternalEncoder = config.getUseExternalFeedback();
-    if (config.getExternalEncoder().isPresent() && useExternalEncoder)
+    if (config.getExternalEncoder().isPresent())
     {
       Object externalEncoder = config.getExternalEncoder().get();
       if (externalEncoder instanceof SparkAbsoluteEncoder)
       {
-        double absoluteEncoderConversionFactor = config.getExternalEncoderGearing().getRotorToMechanismRatio();
+        double absoluteEncoderConversionFactor = config.getExternalEncoderGearing().orElse(MechanismGearing.kOne)
+                                                       .getRotorToMechanismRatio();
         m_sparkAbsoluteEncoder = Optional.of((SparkAbsoluteEncoder) externalEncoder);
         m_sparkBaseConfig.absoluteEncoder.positionConversionFactor(absoluteEncoderConversionFactor)
-                                         .velocityConversionFactor(absoluteEncoderConversionFactor / 60)
-                                         .inverted(config.getExternalEncoderInverted());
+                                         .velocityConversionFactor(absoluteEncoderConversionFactor / 60);
+        config.getExternalEncoderInverted().ifPresent(m_sparkBaseConfig.absoluteEncoder::inverted);
         // Set the absolute encoder as the primary feedback sensor for closed loop control.
-        m_sparkBaseConfig.closedLoop.feedbackSensor(FeedbackSensor.kAbsoluteEncoder);
+        if (useExternalEncoder)
+        {m_sparkBaseConfig.closedLoop.feedbackSensor(FeedbackSensor.kAbsoluteEncoder);}
 
         if (config.getZeroOffset().isPresent())
         {
           m_sparkBaseConfig.absoluteEncoder.zeroOffset(config.getZeroOffset().get().in(Rotations));
+        }
+
+        if (config.getExternalEncoderDiscontinuityPoint().isPresent())
+        {
+          m_sparkBaseConfig.absoluteEncoder.zeroCentered(config.getExternalEncoderDiscontinuityPoint().get()
+                                                               .isEquivalent(Rotations.of(0.5)));
         }
 
         if (RobotBase.isSimulation())
@@ -606,7 +663,13 @@ public class SparkWrapper extends SmartMotorController
 
     } else
     {
-
+      if (config.getExternalEncoderDiscontinuityPoint().isPresent())
+      {
+        throw new SmartMotorControllerConfigurationException(
+            "External encoder zero center is only available for external encoders",
+            "External encoder zero center could not be applied",
+            ".withExternalEncoderZeroCenter");
+      }
       if (config.getZeroOffset().isPresent())
       {
         throw new SmartMotorControllerConfigurationException("Zero offset is only available for external encoders",
@@ -614,7 +677,7 @@ public class SparkWrapper extends SmartMotorController
                                                              ".withExternalEncoderZeroOffset");
       }
 
-      if (config.getExternalEncoderInverted())
+      if (config.getExternalEncoderInverted().isPresent())
       {
         throw new SmartMotorControllerConfigurationException(
             "External encoder cannot be inverted because no external encoder exists",
@@ -622,7 +685,7 @@ public class SparkWrapper extends SmartMotorController
             "withExternalEncoderInverted");
       }
 
-      if (config.getExternalEncoderGearing().getRotorToMechanismRatio() != 1.0)
+      if (config.getExternalEncoderGearing().isPresent())
       {
         throw new SmartMotorControllerConfigurationException(
             "External encoder gearing is not supported when there is no external encoder",
@@ -638,15 +701,21 @@ public class SparkWrapper extends SmartMotorController
       {
         if (follower.getFirst() instanceof SparkMax)
         {
-          ((SparkMax) follower.getFirst()).configure(new SparkMaxConfig().follow(m_spark, follower.getSecond()),
+          var f_cfg = new SparkMaxConfig().follow(m_spark, follower.getSecond());
+          m_config.getIdleMode().ifPresent(mode -> f_cfg.idleMode(mode == MotorMode.BRAKE ? IdleMode.kBrake : IdleMode.kCoast));
+          ((SparkMax) follower.getFirst()).configure(f_cfg,
                                                      ResetMode.kNoResetSafeParameters,
-                                                     PersistMode.kPersistParameters);
+                                                     DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                                               : PersistMode.kPersistParameters);
 
         } else if (follower.getFirst() instanceof SparkFlex)
         {
-          ((SparkFlex) follower.getFirst()).configure(new SparkFlexConfig().follow(m_spark, follower.getSecond()),
+          var f_cfg = new SparkFlexConfig().follow(m_spark, follower.getSecond());
+          m_config.getIdleMode().ifPresent(mode -> f_cfg.idleMode(mode == MotorMode.BRAKE ? IdleMode.kBrake : IdleMode.kCoast));
+          ((SparkFlex) follower.getFirst()).configure(f_cfg,
                                                       ResetMode.kNoResetSafeParameters,
-                                                      PersistMode.kPersistParameters);
+                                                      DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                                                : PersistMode.kPersistParameters);
 
         } else
         {
@@ -664,7 +733,7 @@ public class SparkWrapper extends SmartMotorController
                                                            ".withZeroOffset");
     }
 
-    if (config.getExternalEncoderInverted() && config.getExternalEncoder().isEmpty() && !useExternalEncoder)
+    if (config.getExternalEncoderInverted().isPresent() && config.getExternalEncoder().isEmpty() && !useExternalEncoder)
     {
       throw new SmartMotorControllerConfigurationException(
           "External encoder cannot be inverted because no external encoder exists",
@@ -672,7 +741,7 @@ public class SparkWrapper extends SmartMotorController
           "withExternalEncoderInverted");
     }
 
-    if (config.getExternalEncoderGearing().getRotorToMechanismRatio() != 1.0 && config.getExternalEncoder().isEmpty() &&
+    if (config.getExternalEncoderGearing().isPresent() && config.getExternalEncoder().isEmpty() &&
         !useExternalEncoder)
     {
       throw new SmartMotorControllerConfigurationException(
@@ -715,16 +784,27 @@ public class SparkWrapper extends SmartMotorController
           "withFeedbackSynchronizationThreshold");
     }
 
-    if (config.getEncoderInverted())
+    if (config.getEncoderInverted().isPresent())
     {
       throw new IllegalArgumentException("[ERROR] Spark relative encoder cannot be inverted!");
     }
 
+    if (config.getVendorControlRequest().isPresent())
+    {
+      throw new SmartMotorControllerConfigurationException(
+          "Spark(" + m_spark.getDeviceId() + ") does not support the custom control requests!",
+          "Cannot use given control request",
+          "withVendorControlRequest()");
+    }
+
+    var resetMode = m_config.getResetPreviousConfig() ? ResetMode.kResetSafeParameters
+                                                      : ResetMode.kNoResetSafeParameters;
     config.validateBasicOptions();
     config.validateExternalEncoderOptions();
     return configureSpark(() -> m_spark.configure(m_sparkBaseConfig,
-                                                  ResetMode.kNoResetSafeParameters,
-                                                  PersistMode.kPersistParameters));
+                                                  resetMode,
+                                                  DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                                            : PersistMode.kPersistParameters));
   }
 
   @Override
@@ -739,6 +819,12 @@ public class SparkWrapper extends SmartMotorController
   public void setDutyCycle(double dutyCycle)
   {
     m_spark.set(dutyCycle);
+    if (dutyCycle == 0.0)
+    {
+      m_looseFollowers.ifPresent(looseFollower -> {
+        for (var follower : looseFollower) {follower.setDutyCycle(dutyCycle);}
+      });
+    }
 //    m_simSupplier.ifPresent(simSupplier -> simSupplier.setMechanismStatorDutyCycle(dutyCycle));
   }
 
@@ -768,6 +854,8 @@ public class SparkWrapper extends SmartMotorController
   public void setVoltage(Voltage voltage)
   {
     m_spark.setVoltage(voltage);
+//    if (voltage.in(Volts) == 0.0)
+//    {m_looseFollowers.ifPresent(looseFollower -> {for (var follower : looseFollower) {follower.setVoltage(voltage);}});}
     m_simSupplier.ifPresent(simSupplier -> simSupplier.setMechanismStatorVoltage(voltage));
   }
 
@@ -790,8 +878,15 @@ public class SparkWrapper extends SmartMotorController
   }
 
   @Override
+  public LinearAcceleration getMeasurementAcceleration()
+  {
+    return m_config.convertFromMechanism(getMechanismAcceleration());
+  }
+
+  @Override
   public AngularVelocity getMechanismVelocity()
   {
+    // TODO: Fix this for 2027
     if (m_sparkAbsoluteEncoder.isPresent() && m_config.getUseExternalFeedback())
     {
       return RotationsPerSecond.of(m_sparkAbsoluteEncoder.get().getVelocity());
@@ -801,8 +896,16 @@ public class SparkWrapper extends SmartMotorController
   }
 
   @Override
+  public AngularAcceleration getMechanismAcceleration()
+  {
+    return RotationsPerSecond.per(Microsecond).of(m_accelerationFilter.derivative(getMechanismVelocity().in(
+        RotationsPerSecond)));
+  }
+
+  @Override
   public Angle getMechanismPosition()
   {
+    // TODO: Fix this for 2027
     Angle pos = Rotations.of(m_sparkRelativeEncoder.getPosition());
     if (m_sparkAbsoluteEncoder.isPresent() && m_config.getUseExternalFeedback())
     {
@@ -815,7 +918,7 @@ public class SparkWrapper extends SmartMotorController
   public AngularVelocity getRotorVelocity()
   {
     return RotationsPerSecond.of(
-        getMechanismPosition().in(Rotations) * m_config.getGearing().getMechanismToRotorRatio());
+        getMechanismVelocity().in(RotationsPerSecond) * m_config.getGearing().getMechanismToRotorRatio());
   }
 
   @Override
@@ -825,11 +928,26 @@ public class SparkWrapper extends SmartMotorController
   }
 
   @Override
+  public Optional<Angle> getExternalEncoderPosition()
+  {
+    return m_sparkAbsoluteEncoder.map(absoluteEncoder -> Rotations.of(absoluteEncoder.getPosition()));
+  }
+
+  @Override
+  public Optional<AngularVelocity> getExternalEncoderVelocity()
+  {
+    return m_sparkAbsoluteEncoder.map(absoluteEncoder -> RotationsPerSecond.of(absoluteEncoder.getVelocity()));
+  }
+
+  @Override
   public void setMotorInverted(boolean inverted)
   {
     m_config.withMotorInverted(inverted);
     m_sparkBaseConfig.inverted(inverted);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
   }
 
   @Override
@@ -842,7 +960,10 @@ public class SparkWrapper extends SmartMotorController
 //    }
 //    sparkBaseConfig.analogSensor.inverted(inverted);
     m_sparkBaseConfig.encoder.inverted(inverted);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
   }
 
   @Override
@@ -856,7 +977,11 @@ public class SparkWrapper extends SmartMotorController
     }
     m_sparkBaseConfig.closedLoop.maxMotion.cruiseVelocity(m_config.convertToMechanism(maxVelocity)
                                                                   .in(RotationsPerSecond));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMotionProfileMaxVelocity(maxVelocity);}});
   }
 
   @Override
@@ -870,7 +995,11 @@ public class SparkWrapper extends SmartMotorController
     }
     m_sparkBaseConfig.closedLoop.maxMotion.maxAcceleration(m_config.convertToMechanism(maxAcceleration)
                                                                    .in(RotationsPerSecondPerSecond));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMotionProfileMaxAcceleration(maxAcceleration);}});
   }
 
   @Override
@@ -883,7 +1012,11 @@ public class SparkWrapper extends SmartMotorController
                                                                                     .orElseThrow().maxAcceleration)));
     }
     m_sparkBaseConfig.closedLoop.maxMotion.cruiseVelocity(maxVelocity.in(RotationsPerSecond));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMotionProfileMaxVelocity(maxVelocity);}});
   }
 
   @Override
@@ -897,143 +1030,236 @@ public class SparkWrapper extends SmartMotorController
                                                                                 RotationsPerSecondPerSecond))));
     }
     m_sparkBaseConfig.closedLoop.maxMotion.maxAcceleration(maxAcceleration.in(RotationsPerSecondPerSecond));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMotionProfileMaxAcceleration(maxAcceleration);}});
+  }
+
+  @Override
+  public void setMotionProfileMaxJerk(Velocity<AngularAccelerationUnit> maxJerk)
+  {
+    if (m_trapezoidProfile.isPresent())
+    {
+      m_trapezoidProfile = Optional.of(new TrapezoidProfile(new Constraints(m_config.getTrapezoidProfile()
+                                                                                    .orElseThrow().maxVelocity,
+                                                                            maxJerk.in(
+                                                                                RotationsPerSecondPerSecond.per(Second)))));
+    }
+    m_sparkBaseConfig.closedLoop.maxMotion.maxAcceleration(maxJerk.in(RotationsPerSecondPerSecond.per(Second)));
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMotionProfileMaxJerk(maxJerk);}});
+  }
+
+  @Override
+  public void setExponentialProfile(OptionalDouble kV, OptionalDouble kA, Optional<Voltage> maxInput)
+  {
+    if (m_expoProfile.isPresent() && m_config.getExponentialProfile().isPresent())
+    {
+      var exp = m_config.getExponentialProfile().get();
+      var defaultkV = m_config.getLinearClosedLoopControllerUse() ?
+                      m_config.convertToMechanism(Meters.of(-exp.A / exp.B))
+                              .in(Rotations) :
+                      (-exp.A / exp.B);
+      var defaultkA = m_config.getLinearClosedLoopControllerUse() ?
+                      m_config.convertToMechanism(Meters.of(1.0 / exp.B))
+                              .in(Rotations) : (1.0 / exp.B);
+      var defaultMaxInput = exp.maxInput;
+      m_expoProfile = Optional.of(new ExponentialProfile(ExponentialProfile.Constraints
+                                                             .fromCharacteristics(kV.orElse(defaultkV),
+                                                                                  kA.orElse(defaultkA),
+                                                                                  maxInput.orElse(Volts.of(
+                                                                                              defaultMaxInput))
+                                                                                          .in(Volts))));
+      m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setExponentialProfile(kV, kA, maxInput);}});
+    }
   }
 
   @Override
   public void setKp(double kP)
   {
+    m_config.getPID(m_slot).ifPresent(pid -> pid.setP(kP));
     m_pid.ifPresent(simplePidController -> {
       simplePidController.setP(kP);
     });
-    m_sparkBaseConfig.closedLoop.p(kP);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.p(kP, m_closedLoopSlot);
+
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setKp(kP);}});
   }
 
   @Override
   public void setKi(double kI)
   {
+    m_config.getPID(m_slot).ifPresent(simplePidController -> {simplePidController.setI(kI);});
     m_pid.ifPresent(simplePidController -> {
       simplePidController.setI(kI);
     });
-    m_sparkBaseConfig.closedLoop.i(kI);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.i(kI, m_closedLoopSlot);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setKi(kI);}});
 
   }
 
   @Override
   public void setKd(double kD)
   {
+    m_config.getPID(m_slot).ifPresent(simplePidController -> {simplePidController.setD(kD);});
     m_pid.ifPresent(simplePidController -> {
       simplePidController.setD(kD);
     });
-    m_sparkBaseConfig.closedLoop.d(kD);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.d(kD, m_closedLoopSlot);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setKd(kD);}});
+
   }
 
   @Override
   public void setFeedback(double kP, double kI, double kD)
   {
+    m_config.getPID(m_slot).ifPresent(simplePidController -> {
+      simplePidController.setP(kP);
+      simplePidController.setI(kI);
+      simplePidController.setD(kD);
+    });
     m_pid.ifPresent(simplePidController -> {
       simplePidController.setP(kP);
       simplePidController.setI(kI);
       simplePidController.setD(kD);
     });
-    m_sparkBaseConfig.closedLoop.pid(kP, kI, kD);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.pid(kP, kI, kD, m_closedLoopSlot);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setFeedback(kP, kI, kD);}});
   }
 
   @Override
   public void setKs(double kS)
   {
-    m_config.getSimpleFeedforward().ifPresent(simpleMotorFeedforward -> {
+    m_config.getSimpleFeedforward(m_slot).ifPresent(simpleMotorFeedforward -> {
       simpleMotorFeedforward.setKs(kS);
     });
-    m_config.getArmFeedforward().ifPresent(armFeedforward -> {
+    m_config.getArmFeedforward(m_slot).ifPresent(armFeedforward -> {
       armFeedforward.setKs(kS);
     });
-    m_config.getElevatorFeedforward().ifPresent(elevatorFeedforward -> {
+    m_config.getElevatorFeedforward(m_slot).ifPresent(elevatorFeedforward -> {
       elevatorFeedforward.setKs(kS);
     });
-    m_sparkBaseConfig.closedLoop.feedForward.kS(kS);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.feedForward.kS(kS, m_closedLoopSlot);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setKs(kS);}});
   }
 
   @Override
   public void setKv(double kV)
   {
-    m_config.getSimpleFeedforward().ifPresent(simpleMotorFeedforward -> {
+    m_config.getSimpleFeedforward(m_slot).ifPresent(simpleMotorFeedforward -> {
       simpleMotorFeedforward.setKv(kV);
     });
-    m_config.getArmFeedforward().ifPresent(armFeedforward -> {
+    m_config.getArmFeedforward(m_slot).ifPresent(armFeedforward -> {
       armFeedforward.setKv(kV);
     });
-    m_config.getElevatorFeedforward().ifPresent(elevatorFeedforward -> {
+    m_config.getElevatorFeedforward(m_slot).ifPresent(elevatorFeedforward -> {
       elevatorFeedforward.setKv(kV);
     });
-    m_sparkBaseConfig.closedLoop.feedForward.kV(kV);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.feedForward.kV(kV, m_closedLoopSlot);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setKv(kV);}});
   }
 
   @Override
   public void setKa(double kA)
   {
-    m_config.getSimpleFeedforward().ifPresent(simpleMotorFeedforward -> {
+    m_config.getSimpleFeedforward(m_slot).ifPresent(simpleMotorFeedforward -> {
       simpleMotorFeedforward.setKa(kA);
     });
-    m_config.getArmFeedforward().ifPresent(armFeedforward -> {
+    m_config.getArmFeedforward(m_slot).ifPresent(armFeedforward -> {
       armFeedforward.setKa(kA);
     });
-    m_config.getElevatorFeedforward().ifPresent(elevatorFeedforward -> {
+    m_config.getElevatorFeedforward(m_slot).ifPresent(elevatorFeedforward -> {
       elevatorFeedforward.setKa(kA);
     });
-    m_sparkBaseConfig.closedLoop.feedForward.kA(kA);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.feedForward.kA(kA, m_closedLoopSlot);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setKa(kA);}});
   }
 
   @Override
   public void setKg(double kG)
   {
-    m_config.getArmFeedforward().ifPresent(armFeedforward -> {
+    m_config.getArmFeedforward(m_slot).ifPresent(armFeedforward -> {
       armFeedforward.setKg(kG);
     });
-    m_config.getElevatorFeedforward().ifPresent(elevatorFeedforward -> {
+    m_config.getElevatorFeedforward(m_slot).ifPresent(elevatorFeedforward -> {
       elevatorFeedforward.setKg(kG);
     });
-    if (m_config.getArmFeedforward().isEmpty())
+    if (m_config.getArmFeedforward(m_slot).isEmpty())
     {
-      m_sparkBaseConfig.closedLoop.feedForward.kG(kG);
+      m_sparkBaseConfig.closedLoop.feedForward.kG(kG, m_closedLoopSlot);
     } else
     {
-      m_sparkBaseConfig.closedLoop.feedForward.kCos(kG);
+      m_sparkBaseConfig.closedLoop.feedForward.kCos(kG, m_closedLoopSlot);
     }
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setKg(kG);}});
+
   }
 
   @Override
   public void setFeedforward(double kS, double kV, double kA, double kG)
   {
-    m_config.getSimpleFeedforward().ifPresent(simpleMotorFeedforward -> {
+    m_config.getSimpleFeedforward(m_slot).ifPresent(simpleMotorFeedforward -> {
       simpleMotorFeedforward.setKs(kS);
       simpleMotorFeedforward.setKv(kV);
       simpleMotorFeedforward.setKa(kA);
     });
-    m_config.getArmFeedforward().ifPresent(armFeedforward -> {
+    m_config.getArmFeedforward(m_slot).ifPresent(armFeedforward -> {
       armFeedforward.setKs(kS);
       armFeedforward.setKv(kV);
       armFeedforward.setKa(kA);
       armFeedforward.setKg(kG);
-      m_sparkBaseConfig.closedLoop.feedForward.kCos(kG);
+      m_sparkBaseConfig.closedLoop.feedForward.kCos(kG, m_closedLoopSlot);
     });
-    m_config.getElevatorFeedforward().ifPresent(elevatorFeedforward -> {
+    m_config.getElevatorFeedforward(m_slot).ifPresent(elevatorFeedforward -> {
       elevatorFeedforward.setKs(kS);
       elevatorFeedforward.setKv(kV);
       elevatorFeedforward.setKa(kA);
       elevatorFeedforward.setKg(kG);
-      m_sparkBaseConfig.closedLoop.feedForward.kG(kG);
+      m_sparkBaseConfig.closedLoop.feedForward.kG(kG, m_closedLoopSlot);
     });
-    m_sparkBaseConfig.closedLoop.feedForward.kS(kS).kV(kV).kA(kA);
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_sparkBaseConfig.closedLoop.feedForward.kS(kS, m_closedLoopSlot).kV(kV, m_closedLoopSlot).kA(kA, m_closedLoopSlot);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setFeedforward(kS, kV, kA, kG);}});
   }
 
   @Override
@@ -1041,13 +1267,18 @@ public class SparkWrapper extends SmartMotorController
   {
     m_config.withStatorCurrentLimit(currentLimit);
     m_sparkBaseConfig.smartCurrentLimit((int) currentLimit.in(Amps));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setStatorCurrentLimit(currentLimit);}});
   }
 
   @Deprecated
   /// Unsupported.
   public void setSupplyCurrentLimit(Current currentLimit)
   {
+//    m_looseFollowers.ifPresent(smcs -> {for(var f : smcs){f.setSupplyCurrentLimit(currentLimit);}});
   }
 
   @Override
@@ -1055,7 +1286,11 @@ public class SparkWrapper extends SmartMotorController
   {
     m_config.withClosedLoopRampRate(rampRate);
     m_sparkBaseConfig.closedLoopRampRate(rampRate.in(Seconds));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setClosedLoopRampRate(rampRate);}});
   }
 
   @Override
@@ -1063,7 +1298,11 @@ public class SparkWrapper extends SmartMotorController
   {
     m_config.withOpenLoopRampRate(rampRate);
     m_sparkBaseConfig.openLoopRampRate(rampRate.in(Seconds));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setOpenLoopRampRate(rampRate);}});
   }
 
   @Override
@@ -1071,9 +1310,13 @@ public class SparkWrapper extends SmartMotorController
   {
     if (m_config.getMechanismCircumference().isPresent() && m_config.getMechanismLowerLimit().isPresent())
     {
-      m_config.withSoftLimit(m_config.convertFromMechanism(m_config.getMechanismLowerLimit().get()), upperLimit);
+      m_config.withSoftLimits(m_config.convertFromMechanism(m_config.getMechanismLowerLimit().get()), upperLimit);
       m_sparkBaseConfig.softLimit.forwardSoftLimit(m_config.convertToMechanism(upperLimit).in(Rotations));
-      m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+      m_spark.configureAsync(m_sparkBaseConfig,
+                             ResetMode.kNoResetSafeParameters,
+                             DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                       : PersistMode.kPersistParameters);
+      m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMeasurementUpperLimit(upperLimit);}});
     }
   }
 
@@ -1082,9 +1325,13 @@ public class SparkWrapper extends SmartMotorController
   {
     if (m_config.getMechanismCircumference().isPresent() && m_config.getMechanismUpperLimit().isPresent())
     {
-      m_config.withSoftLimit(lowerLimit, m_config.convertFromMechanism(m_config.getMechanismUpperLimit().get()));
+      m_config.withSoftLimits(lowerLimit, m_config.convertFromMechanism(m_config.getMechanismUpperLimit().get()));
       m_sparkBaseConfig.softLimit.reverseSoftLimit(m_config.convertToMechanism(lowerLimit).in(Rotations));
-      m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+      m_spark.configureAsync(m_sparkBaseConfig,
+                             ResetMode.kNoResetSafeParameters,
+                             DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                       : PersistMode.kPersistParameters);
+      m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMeasurementLowerLimit(lowerLimit);}});
     }
   }
 
@@ -1092,20 +1339,104 @@ public class SparkWrapper extends SmartMotorController
   public void setMechanismUpperLimit(Angle upperLimit)
   {
     m_config.getMechanismLowerLimit().ifPresent(lowerLimit -> {
-      m_config.withSoftLimit(lowerLimit, upperLimit);
+      m_config.withSoftLimits(lowerLimit, upperLimit);
     });
     m_sparkBaseConfig.softLimit.forwardSoftLimit(upperLimit.in(Rotations));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMechanismUpperLimit(upperLimit);}});
   }
 
   @Override
   public void setMechanismLowerLimit(Angle lowerLimit)
   {
     m_config.getMechanismUpperLimit().ifPresent(upperLimit -> {
-      m_config.withSoftLimit(lowerLimit, upperLimit);
+      m_config.withSoftLimits(lowerLimit, upperLimit);
     });
     m_sparkBaseConfig.softLimit.reverseSoftLimit(lowerLimit.in(Rotations));
-    m_spark.configureAsync(m_sparkBaseConfig, ResetMode.kNoResetSafeParameters, PersistMode.kPersistParameters);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMechanismLowerLimit(lowerLimit);}});
+  }
+
+  @Override
+  public void setMechanismLimits(Angle lower, Angle upper)
+  {
+    m_config.withSoftLimits(lower, upper);
+    m_sparkBaseConfig.softLimit.reverseSoftLimit(lower.in(Rotations)).forwardSoftLimit(upper.in(Rotations));
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMechanismLimits(lower, upper);}});
+  }
+
+  @Override
+  public void setMechanismLimitsEnabled(boolean enabled)
+  {
+    m_sparkBaseConfig.softLimit.forwardSoftLimitEnabled(enabled).reverseSoftLimitEnabled(enabled);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMechanismLimitsEnabled(enabled);}});
+  }
+
+  @Override
+  public void setMechanismGearing(MechanismGearing gearing)
+  {
+    m_config.withGearing(gearing);
+    double positionConversionFactor = gearing.getRotorToMechanismRatio();
+    double velocityConversionFactor = gearing.getRotorToMechanismRatio() / 60.0;
+    m_sparkBaseConfig.encoder.positionConversionFactor(positionConversionFactor)
+                             .velocityConversionFactor(velocityConversionFactor);
+    m_spark.configureAsync(m_sparkBaseConfig,
+                           ResetMode.kNoResetSafeParameters,
+                           DriverStation.isEnabled() ? PersistMode.kNoPersistParameters
+                                                     : PersistMode.kPersistParameters);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMechanismGearing(gearing);}});
+  }
+
+  @Override
+  public void setMechanismCircumference(Distance circumference)
+  {
+    m_config.withMechanismCircumference(circumference);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setMechanismCircumference(circumference);}});
+  }
+
+  /**
+   * Convert generic slot into spark specific slot.
+   *
+   * @param slot {@link ClosedLoopControllerSlot} to convert
+   * @return spark specific slot {@link ClosedLoopSlot}
+   */
+  private ClosedLoopSlot getSparkClosedLoopSlot(ClosedLoopControllerSlot slot)
+  {
+    switch (slot)
+    {
+      case SLOT_0:
+        return ClosedLoopSlot.kSlot0;
+      case SLOT_1:
+        return ClosedLoopSlot.kSlot1;
+      case SLOT_2:
+        return ClosedLoopSlot.kSlot2;
+      case SLOT_3:
+        return ClosedLoopSlot.kSlot3;
+      default:
+        throw new IllegalArgumentException("Invalid slot: " + slot);
+    }
+  }
+
+  @Override
+  public void setClosedLoopSlot(ClosedLoopControllerSlot slot)
+  {
+    m_slot = slot;
+    m_closedLoopSlot = getSparkClosedLoopSlot(slot);
+    m_looseFollowers.ifPresent(smcs -> {for (var f : smcs) {f.setClosedLoopSlot(slot);}});
   }
 
   @Override
@@ -1140,10 +1471,4 @@ public class SparkWrapper extends SmartMotorController
                                        DoubleTelemetryField.SupplyCurrentLimit)));
   }
 
-  @Override
-  public Config getSysIdConfig(Voltage maxVoltage, Velocity<VoltageUnit> stepVoltage, Time testDuration)
-  {
-    StatusLogger.start();
-    return new Config(stepVoltage, maxVoltage, testDuration);
-  }
 }

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechs;
 
 import static edu.wpi.first.units.Units.Amps;
@@ -8,8 +11,6 @@ import static edu.wpi.first.units.Units.Inches;
 import static edu.wpi.first.units.Units.Millisecond;
 import static edu.wpi.first.units.Units.Milliseconds;
 import static edu.wpi.first.units.Units.Pounds;
-import static edu.wpi.first.units.Units.RotationsPerSecond;
-import static edu.wpi.first.units.Units.RotationsPerSecondPerSecond;
 import static edu.wpi.first.units.Units.Seconds;
 import static edu.wpi.first.units.Units.Volts;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -17,9 +18,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.ctre.phoenix6.hardware.TalonFX;
 import com.ctre.phoenix6.hardware.TalonFXS;
 import com.revrobotics.spark.SparkFlex;
-import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.SparkMax;
-import com.thethriftybot.devices.ThriftyNova;
 import edu.wpi.first.math.controller.SimpleMotorFeedforward;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.units.measure.Angle;
@@ -44,38 +43,38 @@ import yams.helpers.TestWithScheduler;
 import yams.mechanisms.config.PivotConfig;
 import yams.mechanisms.positional.Pivot;
 import yams.motorcontrollers.SmartMotorController;
+import yams.motorcontrollers.SmartMotorControllerCommandRegistry;
 import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.SmartMotorControllerConfig.ControlMode;
 import yams.motorcontrollers.SmartMotorControllerConfig.MotorMode;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
+import yams.helpers.DeviceCreator;
 import yams.motorcontrollers.local.SparkWrapper;
 import yams.motorcontrollers.remote.TalonFXSWrapper;
 import yams.motorcontrollers.remote.TalonFXWrapper;
 
 public class PivotTest
 {
-
   private static SmartMotorControllerConfig createSMCConfig()
   {
-
     return new SmartMotorControllerConfig()
         .withClosedLoopController(4, 0, 0)
-        .withSoftLimit(Degrees.of(-100), Degrees.of(100))
+        .withSoftLimits(Degrees.of(-100), Degrees.of(100))
         .withGearing(new MechanismGearing(GearBox.fromReductionStages(3, 4, 5)))
         .withIdleMode(MotorMode.BRAKE)
         .withStatorCurrentLimit(Amps.of(40))
         .withMotorInverted(false)
         .withFeedforward(new SimpleMotorFeedforward(1, 0, 0, 0.02))
-        .withControlMode(ControlMode.CLOSED_LOOP);
+        .withControlMode(ControlMode.CLOSED_LOOP)
+        .withStartingPosition(Degrees.of(0))
+        .withMomentOfInertia(Inches.of(4), Pounds.of(1));
   }
 
   private static Pivot createPivot(SmartMotorController smc)
   {
-    PivotConfig config = new PivotConfig(smc)
-        .withHardLimit(Degrees.of(-100), Degrees.of(150))
-        .withStartingPosition(Degrees.of(0))
-        .withMOI(Inches.of(4), Pounds.of(1));
-    Pivot                             pivot  = new Pivot(config);
+    PivotConfig config = new PivotConfig()
+        .withHardLimits(Degrees.of(-100), Degrees.of(150));
+    Pivot                             pivot  = new Pivot(config, smc);
     SmartMotorControllerTestSubsystem subsys = (SmartMotorControllerTestSubsystem) smc.getConfig().getSubsystem();
     subsys.smc = smc;
     subsys.mechSimPeriodic = pivot::simIterate;
@@ -111,11 +110,11 @@ public class PivotTest
         case 2: smcConfig = addExponentialProfile(smcConfig);
           break;
       }
-      SparkMax  smax  = new SparkMax(10 + offset + i, MotorType.kBrushless);
-      SparkFlex sflex = new SparkFlex(20 + offset + i, MotorType.kBrushless);
+      SparkMax  smax  = DeviceCreator.createSparkMax();
+      SparkFlex sflex = DeviceCreator.createSparkFlex();
 //    ThriftyNova tnova = new ThriftyNova(30 + offset+i);
-      TalonFXS tfxs = new TalonFXS(40 + offset + i);
-      TalonFX  tfx  = new TalonFX(50 + offset + i);
+      TalonFXS tfxs = DeviceCreator.createTalonFXS();
+      TalonFX  tfx  = DeviceCreator.createTalonFX();
       smcList.add(Arguments.of(setupTestSubsystem(new SparkWrapper(smax,
                                                                    DCMotor.getNEO(1),
                                                                    smcConfig.clone()
@@ -157,6 +156,7 @@ public class PivotTest
 
   private static void closeSMC(SmartMotorController smc)
   {
+    SmartMotorControllerCommandRegistry.removeCommands(smc.getConfig().getSubsystem());
     CommandScheduler.getInstance().unregisterSubsystem((SmartMotorControllerTestSubsystem) smc.getConfig()
                                                                                               .getSubsystem());
     ((SmartMotorControllerTestSubsystem) smc.getConfig().getSubsystem()).close();
@@ -172,9 +172,6 @@ public class PivotTest
     } else if (motorController instanceof SparkFlex)
     {
       ((SparkFlex) motorController).close();
-    } else if (motorController instanceof ThriftyNova)
-    {
-//      ((ThriftyNova)motorController).close();
     } else if (motorController instanceof TalonFXS)
     {
       ((TalonFXS) motorController).close();

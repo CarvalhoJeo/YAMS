@@ -1,9 +1,13 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.config;
 
 import static edu.wpi.first.units.Units.Meters;
 import static edu.wpi.first.units.Units.MetersPerSecond;
 import static edu.wpi.first.units.Units.Rotations;
 
+import edu.wpi.first.math.filter.Debouncer;
 import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
@@ -15,24 +19,74 @@ import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
 import yams.gearing.GearBox;
 import yams.gearing.MechanismGearing;
+import yams.mechanisms.swerve.SwerveModule;
 import yams.motorcontrollers.SmartMotorController;
 import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
 
 /**
  * Swerve Module
+ *
+ * <h2>Configuration Example</h2>
+ * <p>
+ * The following example shows how to build a complete {@link SwerveModuleConfig} for a single
+ * swerve module using TalonFX motors and a CANcoder absolute encoder.
+ * </p>
+ * <pre>{@code
+ * import static edu.wpi.first.units.Units.*;
+ * import com.ctre.phoenix6.hardware.TalonFX;
+ * import com.ctre.phoenix6.hardware.CANcoder;
+ * import edu.wpi.first.math.system.plant.DCMotor;
+ * import yams.motorcontrollers.SmartMotorControllerConfig;
+ * import yams.motorcontrollers.SmartMotorControllerConfig.ControlMode;
+ * import yams.motorcontrollers.SmartMotorController;
+ * import yams.motorcontrollers.remote.TalonFXWrapper;
+ * import yams.mechanisms.config.SwerveModuleConfig;
+ * import yams.gearing.GearBox;
+ *
+ * // Drive motor: velocity closed-loop control (e.g. L2 Falcon gearing 6.75:1)
+ * SmartMotorControllerConfig driveConfig = new SmartMotorControllerConfig()
+ *     .withMotorInverted(false)
+ *     .withStatorCurrentLimit(Amps.of(50))
+ *     .withGearing(new GearBox(new double[]{6.75}))
+ *     .withClosedLoopController(0.05, 0.0, 0.001)
+ *     .withControlMode(ControlMode.CLOSED_LOOP);
+ *
+ * // Steer (azimuth) motor: position closed-loop control (e.g. 12.8:1 reduction)
+ * SmartMotorControllerConfig steerConfig = new SmartMotorControllerConfig()
+ *     .withMotorInverted(true)
+ *     .withStatorCurrentLimit(Amps.of(30))
+ *     .withGearing(new GearBox(new double[]{12.8}))
+ *     .withContinuousWrapping(Rotations.of(-0.5), Rotations.of(0.5))
+ *     .withClosedLoopController(5.0, 0.0, 0.1)
+ *     .withControlMode(ControlMode.CLOSED_LOOP);
+ *
+ * // Create motor controller instances directly
+ * SmartMotorController driveMotor = new TalonFXWrapper(new TalonFX(1), DCMotor.getKrakenX60(1), driveConfig);
+ * SmartMotorController steerMotor = new TalonFXWrapper(new TalonFX(2), DCMotor.getFalcon500(1), steerConfig);
+ *
+ * // Assemble the module config (front-left corner, 0.2 m from centre each axis)
+ * CANcoder cancoder = new CANcoder(10);
+ * SwerveModuleConfig frontLeftConfig = new SwerveModuleConfig(driveMotor, steerMotor)
+ *     .withWheelRadius(Inches.of(2))
+ *     .withLocation(Meters.of(0.2), Meters.of(0.2))     // front, left
+ *     .withAbsoluteEncoder(cancoder)
+ *     .withAbsoluteEncoderOffset(Rotations.of(0.25))    // bevel-left zero offset
+ *     .withCosineCompensation(true)
+ *     .withOptimization(true)
+ *     .withTelemetry("FrontLeft", TelemetryVerbosity.HIGH);
+ * }</pre>
  **/
 public class SwerveModuleConfig
 {
-
   /**
-   * {@link SmartMotorController} for the {@link yams.mechanisms.swerve.SwerveModule}
+   * {@link SmartMotorController} for the {@link SwerveModule}
    */
-  private Optional<SmartMotorController> driveMotor;
+  private Optional<SmartMotorController> driveMotor   = Optional.empty();
   /**
-   * {@link SmartMotorController} for the {@link yams.mechanisms.swerve.SwerveModule}
+   * {@link SmartMotorController} for the {@link SwerveModule}
    */
-  private Optional<SmartMotorController> azimuthMotor;
+  private Optional<SmartMotorController> azimuthMotor = Optional.empty();
   /**
    * Telemetry name.
    */
@@ -63,7 +117,7 @@ public class SwerveModuleConfig
    */
   private boolean                        cosineCompensation            = false;
   /**
-   * Coupling ratio for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Coupling ratio for the {@link SwerveModule}.
    */
   private GearBox                        couplingRatio;
   /**
@@ -71,7 +125,7 @@ public class SwerveModuleConfig
    */
   private Optional<LinearVelocity>       minimumVelocity               = Optional.empty();
   /**
-   * Distance from the center of rotation for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Distance from the center of rotation for the {@link SwerveModule}.
    */
   private Optional<Translation2d>        distanceFromCenterOfRotation  = Optional.empty();
   /**
@@ -83,7 +137,17 @@ public class SwerveModuleConfig
    */
   private Optional<Distance> wheelCircumference = Optional.empty();
   /**
-   * Create the {@link SwerveModuleConfig} for the {@link yams.mechanisms.swerve.SwerveModule}
+   * Last angle this config actually commanded via {@link #getOptimizedState(SwerveModuleState)}.
+   * The flip decision is made against this, not the live absolute encoder reading: kinematics
+   * recomputes the raw desired angle every loop with no memory of a prior flip, so if the
+   * decision were re-derived from the encoder, holding the raw state while a flip is debouncing
+   * would drive the wheel toward the raw angle, pulling the encoder (and thus the error that
+   * triggered the flip) back down before the debounce could ever confirm it.
+   */
+  private Rotation2d lastCommandedAngle;
+
+  /**
+   * Create the {@link SwerveModuleConfig} for the {@link SwerveModule}
    *
    * @param drive   Drive motor controller.
    * @param azimuth Azimuth motor controller.
@@ -95,10 +159,10 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Create the {@link SwerveModuleConfig} for the {@link yams.mechanisms.swerve.SwerveModule}
+   * Create the {@link SwerveModuleConfig} for the {@link SwerveModule}
    *
    * @implNote Required to use {@link #withSmartMotorController(SmartMotorController, SmartMotorController)} BEFORE
-   * passed into {@link yams.mechanisms.swerve.SwerveModule}
+   * passed into {@link SwerveModule}
    */
   public SwerveModuleConfig() {}
 
@@ -132,7 +196,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Set the {@link SmartMotorController} for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Set the {@link SmartMotorController} for the {@link SwerveModule}.
    *
    * @param driveMotor   {@link SmartMotorController} for the drive motor.
    * @param azimuthMotor {@link SmartMotorController} for the azimuth motor.
@@ -152,7 +216,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Cosine compensation for the {@link yams.mechanisms.swerve.SwerveModule}, adjusting the velocity by the cosine of
+   * Cosine compensation for the {@link SwerveModule}, adjusting the velocity by the cosine of
    * the (current_angle-desired_angle).
    *
    * @param compensate Enable or disable cosine compensation.
@@ -179,7 +243,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Set the distance from the center of rotation for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Set the distance from the center of rotation for the {@link SwerveModule}.
    *
    * @param front Distance from the front of the robot, will be converted to Meters. (The X location)
    * @param left  Distance from the left of the robot, will be converted to Meters. (The Y location)
@@ -193,9 +257,9 @@ public class SwerveModuleConfig
 
 
   /**
-   * Set the location for the {@link yams.mechanisms.swerve.SwerveModule} in Meters from the center of rotation.
+   * Set the location for the {@link SwerveModule} in Meters from the center of rotation.
    *
-   * @param location Location of the {@link yams.mechanisms.swerve.SwerveModule} in meters from the center of rotation.
+   * @param location Location of the {@link SwerveModule} in meters from the center of rotation.
    * @return {@link SwerveModuleConfig} for chaining.
    */
   public SwerveModuleConfig withLocation(Translation2d location)
@@ -205,7 +269,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Set the distance from the center of rotation for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Set the distance from the center of rotation for the {@link SwerveModule}.
    *
    * @param front Distance from the front of the robot, will be converted to meters. (The X location)
    * @param left  Distance from the left of the robot, will be converted to meters. (The Y location)
@@ -217,7 +281,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Set the location for the {@link yams.mechanisms.swerve.SwerveModule} using polar coordinates.
+   * Set the location for the {@link SwerveModule} using polar coordinates.
    *
    * @param distance Distance from the center of rotation will be converted to meters.
    * @param angle    Angle from the center of rotation.
@@ -347,7 +411,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Configure telemetry for the {@link yams.mechanisms.swerve.SwerveModule} mechanism.
+   * Configure telemetry for the {@link SwerveModule} mechanism.
    *
    * @param telemetryName      Telemetry NetworkTable name to appear under "SmartDashboard/"
    * @param telemetryVerbosity Telemetry verbosity to apply.
@@ -384,7 +448,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Get the drive {@link SmartMotorController} for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Get the drive {@link SmartMotorController} for the {@link SwerveModule}.
    *
    * @return {@link SmartMotorController} for the drive motor.
    */
@@ -394,7 +458,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Get the azimuth {@link SmartMotorController} for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Get the azimuth {@link SmartMotorController} for the {@link SwerveModule}.
    *
    * @return {@link SmartMotorController} for the azimuth motor.
    */
@@ -430,7 +494,6 @@ public class SwerveModuleConfig
     return desiredState.speedMetersPerSecond * cosineScalar;
   }
 
-
   /**
    * Get the optimized {@link SwerveModuleState} applying all optional optimizations.
    *
@@ -450,19 +513,24 @@ public class SwerveModuleConfig
     }
     if (swerveModuleStateOptimization)
     {
-      state.optimize(new Rotation2d(getAbsoluteEncoderAngle()));
+        if (lastCommandedAngle == null)
+        {
+            lastCommandedAngle = new Rotation2d(getAbsoluteEncoderAngle());
+        }
+        state.optimize(lastCommandedAngle);
+        lastCommandedAngle = state.angle;
     }
     if (cosineCompensation)
     {
-      state.speedMetersPerSecond *= getCosineCompensatedVelocity(state);
+      state.speedMetersPerSecond = getCosineCompensatedVelocity(state);
     }
     return state;
   }
 
   /**
-   * Get the telemetry name for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Get the telemetry name for the {@link SwerveModule}.
    *
-   * @return Telemetry name for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * @return Telemetry name for the {@link SwerveModule}.
    */
   public Optional<String> getTelemetryName()
   {
@@ -470,9 +538,9 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Get the telemetry verbosity for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Get the telemetry verbosity for the {@link SwerveModule}.
    *
-   * @return {@link TelemetryVerbosity} for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * @return {@link TelemetryVerbosity} for the {@link SwerveModule}.
    */
   public Optional<TelemetryVerbosity> getTelemetryVerbosity()
   {
@@ -480,9 +548,9 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Get the location of the {@link yams.mechanisms.swerve.SwerveModule} in meters from the center of rotation.
+   * Get the location of the {@link SwerveModule} in meters from the center of rotation.
    *
-   * @return {@link Translation2d} of the {@link yams.mechanisms.swerve.SwerveModule}
+   * @return {@link Translation2d} of the {@link SwerveModule}
    */
   public Optional<Translation2d> getLocation()
   {

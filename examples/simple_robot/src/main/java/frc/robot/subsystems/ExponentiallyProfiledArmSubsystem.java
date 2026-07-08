@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package frc.robot.subsystems;
 
 
@@ -6,7 +9,6 @@ import static edu.wpi.first.units.Units.Degrees;
 import static edu.wpi.first.units.Units.DegreesPerSecond;
 import static edu.wpi.first.units.Units.Feet;
 import static edu.wpi.first.units.Units.Pounds;
-import static edu.wpi.first.units.Units.Second;
 import static edu.wpi.first.units.Units.Seconds;
 import static edu.wpi.first.units.Units.Volts;
 
@@ -43,7 +45,6 @@ import yams.motorcontrollers.local.SparkWrapper;
  */
 public class ExponentiallyProfiledArmSubsystem extends SubsystemBase
 {
-
   private final String           motorTelemetryName = "ExponentiallyProfiledArmMotor";
   private final String           mechTelemetryName  = "ExponentiallyProfiledArm";
   private final SparkMax         armMotor           = new SparkMax(1, MotorType.kBrushless);
@@ -103,28 +104,34 @@ public class ExponentiallyProfiledArmSubsystem extends SubsystemBase
                                                 /*
                                                  * Closed loop configuration options for the motor.
                                                  */
-                                                .withClosedLoopController(pidController)
+                                                .withClosedLoopController(1,0,0)
+          .withExponentialProfile(ExponentialProfilePIDController.createArmConstraints(
+                  Volts.of(12),
+                  dcMotor,
+                  weight,
+                  length,
+                  gearing))
                                                 .withFeedforward(armFeedforward)
-                                                .withSoftLimit(softLowerLimit, softUpperLimit);
+                                                .withSoftLimits(softLowerLimit, softUpperLimit)
+                                                .withStartingPosition(startingAngle); // The starting position should ONLY be defined if you are NOT using an absolute encoder.
 
   /// Generic Smart Motor Controller with our options and vendor motor.
   private final SmartMotorController motor    = new SparkWrapper(armMotor, dcMotor, motorConfig);
   /// Arm-specific options
-  private       ArmConfig            m_config = new ArmConfig(motor)
+  private       ArmConfig            m_config = new ArmConfig()
       /*
        * Basic configuration options for the arm.
        */
       .withLength(length)
       .withMass(weight)
-      .withStartingPosition(startingAngle) // The starting position should ONLY be defined if you are NOT using an absolute encoder.
-      //.withHorizontalZero(Degrees.of(0)) // The horizontal zero should ONLY be defined if you ARE using an absolute encoder.
+      //.withSimStartingPosition(Degrees.of(0)) // Override the starting position for simulation only.
       .withTelemetry(mechTelemetryName, TelemetryVerbosity.HIGH)
       /*
        * Simulation configuration options for the arm.
        */
-      .withHardLimit(hardLowerLimit, hardUpperLimit);
+      .withHardLimits(hardLowerLimit, hardUpperLimit);
   // Arm mechanism
-  private final Arm                  arm      = new Arm(m_config);
+  private final Arm                  arm      = new Arm(m_config, motor);
 
   public ExponentiallyProfiledArmSubsystem()
   {
@@ -141,14 +148,14 @@ public class ExponentiallyProfiledArmSubsystem extends SubsystemBase
   }
 
   /**
-   * Reset the encoder to the lowest position when the current threshhold is reached. Should be used when the Arm
-   * position is unreliable, like startup. Threshhold is only detected if exceeded for 0.4 seconds, and the motor moves
+   * Reset the encoder to the lowest position when the current threshold is reached. Should be used when the Arm
+   * position is unreliable, like startup. Threshold is only detected if exceeded for 0.4 seconds, and the motor moves
    * less than 2 degrees per second.
    *
-   * @param threshhold The current threshhold held when the Arm is at it's hard limit.
+   * @param threshold The current threshold held when the Arm is at its hard limit.
    * @return
    */
-  public Command homing(Current threshhold)
+  public Command homing(Current threshold)
   {
     Debouncer       currentDebouncer  = new Debouncer(0.4); // Current threshold is only detected if exceeded for 0.4 seconds.
     Voltage         runVolts          = Volts.of(2); // Volts required to run the mechanism up. Could be negative if the mechanism is inverted.
@@ -156,7 +163,7 @@ public class ExponentiallyProfiledArmSubsystem extends SubsystemBase
     AngularVelocity velocityThreshold = DegreesPerSecond.of(2); // The maximum amount of movement for the arm to be considered "hitting the hard limit".
     return Commands.startRun(motor::stopClosedLoopController, // Stop the closed loop controller
                              () -> motor.setVoltage(runVolts)) // Set the voltage of the motor
-                   .until(() -> currentDebouncer.calculate(motor.getStatorCurrent().gte(threshhold) &&
+                   .until(() -> currentDebouncer.calculate(motor.getStatorCurrent().gte(threshold) &&
                                                            motor.getMechanismVelocity().abs(DegreesPerSecond) <=
                                                            velocityThreshold.in(DegreesPerSecond)))
                    .finallyDo(() -> {
@@ -175,8 +182,4 @@ public class ExponentiallyProfiledArmSubsystem extends SubsystemBase
     return arm.setAngle(angle);
   }
 
-  public Command sysId()
-    {
-        return arm.sysId(Volts.of(3), Volts.of(3).per(Second), Second.of(30));
-    }
 }

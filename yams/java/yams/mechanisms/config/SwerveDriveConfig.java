@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.config;
 
 import static edu.wpi.first.units.Units.RadiansPerSecond;
@@ -19,17 +22,97 @@ import edu.wpi.first.wpilibj2.command.Subsystem;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Supplier;
+
+import yams.mechanisms.swerve.SwerveDrive;
 import yams.mechanisms.swerve.SwerveModule;
 import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
 
 /**
  * Swerve Drive Configuration
+ *
+ * <h2>Configuration Example</h2>
+ * <p>
+ * The following example builds a four-module swerve drive using NEO motors controlled by
+ * {@code SparkMax} controllers and CANcoder absolute encoders.  Modules are ordered
+ * <b>clockwise from front-left</b>: FL, FR, BL, BR.  Each module needs its position
+ * relative to the robot centre of rotation (X = forward, Y = left, in metres).
+ * </p>
+ * <pre>{@code
+ * // -- shared constants -------------------------------------------------------
+ * MechanismGearing driveGearing   = new MechanismGearing(6.75);
+ * MechanismGearing azimuthGearing = new MechanismGearing(12.8);
+ * Distance         wheelDiameter  = Inches.of(4);
+ * double           maxSpeedMps    = 4.5; // metres per second
+ *
+ * // -- helper that builds one module -----------------------------------------
+ * SwerveModule buildModule(SubsystemBase subsystem,
+ *                          SparkMax       driveMotor,
+ *                          SparkMax       azimuthMotor,
+ *                          CANcoder       encoder,
+ *                          String         name,
+ *                          Distance       front,
+ *                          Distance       left) {
+ *
+ *     SmartMotorControllerConfig driveCfg = new SmartMotorControllerConfig(subsystem)
+ *         .withWheelDiameter(wheelDiameter)
+ *         .withGearing(driveGearing)
+ *         .withClosedLoopController(0.3, 0, 0)
+ *         .withFeedforward(new SimpleMotorFeedforward(0,
+ *             12.0 / (maxSpeedMps / wheelDiameter.in(Meters)), 0.01))
+ *         .withStatorCurrentLimit(Amps.of(40))
+ *         .withTelemetry("driveMotor", TelemetryVerbosity.HIGH);
+ *
+ *     SmartMotorControllerConfig azimuthCfg = new SmartMotorControllerConfig(subsystem)
+ *         .withGearing(azimuthGearing)
+ *         .withClosedLoopController(1.0, 0, 0)
+ *         .withFeedforward(new SimpleMotorFeedforward(0, 1))
+ *         .withStatorCurrentLimit(Amps.of(20))
+ *         .withTelemetry("angleMotor", TelemetryVerbosity.HIGH);
+ *
+ *     SmartMotorController driveSMC   = new SparkWrapper(driveMotor,   DCMotor.getNEO(1), driveCfg);
+ *     SmartMotorController azimuthSMC = new SparkWrapper(azimuthMotor, DCMotor.getNEO(1), azimuthCfg);
+ *
+ *     SwerveModuleConfig moduleConfig = new SwerveModuleConfig(driveSMC, azimuthSMC)
+ *         .withAbsoluteEncoder(encoder.getAbsolutePosition().asSupplier())
+ *         .withLocation(front, left)
+ *         .withOptimization(true)
+ *         .withTelemetry(name, TelemetryVerbosity.HIGH);
+ *
+ *     return new SwerveModule(moduleConfig);
+ * }
+ *
+ * // -- build all four modules (trackwidth = 0.6 m, wheelbase = 0.6 m) -------
+ * Distance halfTrack    = Meters.of(0.3);  // half of 0.6 m trackwidth
+ * Distance halfWheelbase = Meters.of(0.3); // half of 0.6 m wheelbase
+ *
+ * SwerveModule fl = buildModule(this,
+ *     new SparkMax(1, MotorType.kBrushless), new SparkMax(2, MotorType.kBrushless),
+ *     new CANcoder(3), "frontleft",  halfWheelbase,  halfTrack);
+ * SwerveModule fr = buildModule(this,
+ *     new SparkMax(4, MotorType.kBrushless), new SparkMax(5, MotorType.kBrushless),
+ *     new CANcoder(6), "frontright", halfWheelbase, halfTrack.unaryMinus());
+ * SwerveModule bl = buildModule(this,
+ *     new SparkMax(7, MotorType.kBrushless), new SparkMax(8, MotorType.kBrushless),
+ *     new CANcoder(9), "backleft",  halfWheelbase.unaryMinus(),  halfTrack);
+ * SwerveModule br = buildModule(this,
+ *     new SparkMax(10, MotorType.kBrushless), new SparkMax(11, MotorType.kBrushless),
+ *     new CANcoder(12), "backright", halfWheelbase.unaryMinus(), halfTrack.unaryMinus());
+ *
+ * // -- assemble the SwerveDriveConfig ----------------------------------------
+ * Pigeon2 gyro = new Pigeon2(14);
+ *
+ * SwerveDriveConfig config = new SwerveDriveConfig(this, fl, fr, bl, br)
+ *     .withGyro(gyro.getYaw().asSupplier())
+ *     .withMaximumChassisSpeed(MetersPerSecond.of(maxSpeedMps), DegreesPerSecond.of(360))
+ *     .withTranslationController(new PIDController(1.0, 0, 0))
+ *     .withRotationController(new PIDController(1.0, 0, 0))
+ *     .withStartingPose(new Pose2d());
+ * }</pre>
  */
 public class SwerveDriveConfig
 {
-
   /**
-   * {@link SwerveModule}s for the {@link yams.mechanisms.swerve.SwerveDrive}.
+   * {@link SwerveModule}s for the {@link SwerveDrive}.
    */
   private SwerveModule[]                      modules;
   /**
@@ -105,18 +188,14 @@ public class SwerveDriveConfig
    */
   private OptionalDouble                      simAngularVelocityScaleFactor = OptionalDouble.empty();
   /**
-   *  MapleSim Drive Simulation.
-   */
-//  private       Optional<SelfControlledSwerveDriveSimulation>   mapleDriveSim                   = Optional.empty();
-  /**
    * Swerve drive subsystem.
    */
   private Subsystem                           subsystem;
 
   /**
-   * Create the {@link SwerveDriveConfig} for the {@link yams.mechanisms.swerve.SwerveDrive}
+   * Create the {@link SwerveDriveConfig} for the {@link SwerveDrive}
    *
-   * @param modules         {@link SwerveModule}s for the {@link yams.mechanisms.swerve.SwerveDrive}
+   * @param modules         {@link SwerveModule}s for the {@link SwerveDrive}
    * @param swerveSubsystem SwerveDrive subsystem.
    */
   public SwerveDriveConfig(Subsystem swerveSubsystem, SwerveModule... modules)
@@ -126,7 +205,7 @@ public class SwerveDriveConfig
   }
 
   /**
-   * Create the {@link SwerveDriveConfig} for the {@link yams.mechanisms.swerve.SwerveDrive}
+   * Create the {@link SwerveDriveConfig} for the {@link SwerveDrive}
    *
    * @implNote Must define a Subsystem with {@link #withSubsystem(Subsystem)} and modules with
    * {@link #withModules(SwerveModule...)}
@@ -136,9 +215,9 @@ public class SwerveDriveConfig
   }
 
   /**
-   * Define a {@link Subsystem} for the {@link yams.mechanisms.swerve.SwerveDrive}
+   * Define a {@link Subsystem} for the {@link SwerveDrive}
    *
-   * @param subsystem {@link Subsystem} for the {@link yams.mechanisms.swerve.SwerveDrive}
+   * @param subsystem {@link Subsystem} for the {@link SwerveDrive}
    * @return {@link SwerveDriveConfig} for chaining.
    */
   public SwerveDriveConfig withSubsystem(Subsystem subsystem)
@@ -148,9 +227,9 @@ public class SwerveDriveConfig
   }
 
   /**
-   * Set the {@link SwerveModule}s for the {@link yams.mechanisms.swerve.SwerveDrive}.
+   * Set the {@link SwerveModule}s for the {@link SwerveDrive}.
    *
-   * @param modules {@link SwerveModule}s for the {@link yams.mechanisms.swerve.SwerveDrive}.
+   * @param modules {@link SwerveModule}s for the {@link SwerveDrive}.
    * @return {@link SwerveDriveConfig} for chaining.
    */
   public SwerveDriveConfig withModules(SwerveModule... modules)
@@ -180,6 +259,10 @@ public class SwerveDriveConfig
    */
   public SwerveDriveConfig withSimRotationController(PIDController controller)
   {
+    if (controller != null)
+    {
+      controller.enableContinuousInput(-Math.PI, Math.PI);
+    }
     simRotationController = Optional.ofNullable(controller);
     return this;
   }
@@ -298,7 +381,7 @@ public class SwerveDriveConfig
   }
 
   /**
-   * Get the {@link SwerveModule}s for the {@link yams.mechanisms.swerve.SwerveDrive}.
+   * Get the {@link SwerveModule}s for the {@link SwerveDrive}.
    *
    * @param gyro {@link Supplier} for the gyro.
    * @return {@link SwerveDriveConfig} for chaining.
@@ -393,7 +476,7 @@ public class SwerveDriveConfig
 //  }
 
   /**
-   * Configure telemetry for the {@link yams.mechanisms.swerve.SwerveModule} mechanism.
+   * Configure telemetry for the {@link SwerveModule} mechanism.
    *
    * @param telemetryVerbosity Telemetry verbosity to apply.
    * @return {@link SwerveDriveConfig} for chaining.
@@ -415,9 +498,9 @@ public class SwerveDriveConfig
   }
 
   /**
-   * Get the telemetry verbosity for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * Get the telemetry verbosity for the {@link SwerveModule}.
    *
-   * @return {@link TelemetryVerbosity} for the {@link yams.mechanisms.swerve.SwerveModule}.
+   * @return {@link TelemetryVerbosity} for the {@link SwerveModule}.
    */
   public Optional<TelemetryVerbosity> getTelemetryVerbosity()
   {
@@ -425,9 +508,9 @@ public class SwerveDriveConfig
   }
 
   /**
-   * Get the {@link SwerveModule}s for the {@link yams.mechanisms.swerve.SwerveDrive}.
+   * Get the {@link SwerveModule}s for the {@link SwerveDrive}.
    *
-   * @return {@link SwerveModule}s for the {@link yams.mechanisms.swerve.SwerveDrive}.
+   * @return {@link SwerveModule}s for the {@link SwerveDrive}.
    */
   public SwerveModule[] getModules()
   {
@@ -616,5 +699,15 @@ public class SwerveDriveConfig
   public Subsystem getSubsystem()
   {
     return subsystem;
+  }
+
+  /**
+   * Use an external feedback sensor for the {@link SwerveModule}s.
+   *
+   * @return External feedback sensor for the {@link SwerveModule}s.
+   */
+  public boolean useExternalFeedbackSensor()
+  {
+    return true;
   }
 }

@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.positional;
 
 import static edu.wpi.first.units.Units.Degrees;
@@ -10,13 +13,8 @@ import edu.wpi.first.math.geometry.Rotation3d;
 import edu.wpi.first.math.geometry.Translation3d;
 import edu.wpi.first.math.system.plant.DCMotor;
 import edu.wpi.first.math.system.plant.LinearSystemId;
-import edu.wpi.first.units.VoltageUnit;
 import edu.wpi.first.units.measure.Angle;
 import edu.wpi.first.units.measure.Distance;
-import edu.wpi.first.units.measure.LinearVelocity;
-import edu.wpi.first.units.measure.Time;
-import edu.wpi.first.units.measure.Velocity;
-import edu.wpi.first.units.measure.Voltage;
 import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.simulation.BatterySim;
 import edu.wpi.first.wpilibj.simulation.DCMotorSim;
@@ -29,8 +27,6 @@ import edu.wpi.first.wpilibj.util.Color8Bit;
 import edu.wpi.first.wpilibj2.command.Command;
 import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj2.command.button.Trigger;
-import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine;
-import edu.wpi.first.wpilibj2.command.sysid.SysIdRoutine.Direction;
 import java.util.Optional;
 import java.util.function.Supplier;
 import yams.exceptions.PivotConfigurationException;
@@ -43,10 +39,56 @@ import yams.motorcontrollers.simulation.DCMotorSimSupplier;
 
 /**
  * Pivot mechanism.
+ *
+ * <p>A Pivot is a single-jointed rotation mechanism that rotates around the vertical axis,
+ * such as a shooter hood or turret. It is controlled by a {@link SmartMotorController} and
+ * supports position control, trigger bindings, and simulation.</p>
+ *
+ * <h2>Usage Example</h2>
+ * <pre>{@code
+ * // --- Configuration ---
+ * SmartMotorControllerConfig motorConfig = new SmartMotorControllerConfig()
+ *     .withClosedLoopController(0.15,0,0.004)
+ *     .withFeedforward(new SimpleMotorFeedforward(0.05,0,0)
+ *     .withStatorCurrentLimit(Amps.of(40))
+ *     .withMechanismUpperLimit(Degrees.of(60))
+ *     .withMechanismLowerLimit(Degrees.of(0))
+ *     .withStartingPosition(Degrees.of(0));
+ *
+ * SmartMotorController motor = new TalonFXWrapper(
+ *     new TalonFX(3),
+ *     DCMotor.getKrakenX60(1),
+ *     motorConfig);
+ *
+ * PivotConfig pivotConfig = new PivotConfig()
+ *     .withHardLimits(Degrees.of(0), Degrees.of(60))
+ *     .withTelemetry("ShooterHood", TelemetryVerbosity.HIGH);
+ *
+ * // --- Instantiation ---
+ * Pivot pivot = new Pivot(pivotConfig, motor);
+ *
+ * // --- Commands ---
+ * // setAngle() returns a Command that continuously drives the pivot to the target angle
+ * Command aimHigh = pivot.setAngle(Degrees.of(45));
+ *
+ * // runTo() drives to the angle and ends once the pivot is within tolerance
+ * Command stowPivot = pivot.runTo(Degrees.of(0), Degrees.of(1));
+ *
+ * // --- Trigger bindings ---
+ * // Fire when the pivot is within 2 degrees of the shooting angle
+ * pivot.isNear(Degrees.of(45), Degrees.of(2)).onTrue(shooter.runShooter());
+ *
+ * // Bind on boundary conditions
+ * pivot.gte(Degrees.of(55)).onTrue(Commands.print("Approaching upper limit!"));
+ * pivot.lte(Degrees.of(5)).onTrue(Commands.print("Pivot near stow position."));
+ *
+ * // --- Periodic callbacks (robotPeriodic or subsystem periodic) ---
+ * pivot.simIterate();      // advances simulation state each loop
+ * pivot.updateTelemetry(); // publishes data to NetworkTables/SmartDashboard
+ * }</pre>
  */
 public class Pivot extends SmartPositionalMechanism
 {
-
   /**
    * Pivot config.
    */
@@ -64,11 +106,12 @@ public class Pivot extends SmartPositionalMechanism
    * Construct the Pivot class
    *
    * @param config Pivot configuration.
+   * @param smc    {@link SmartMotorController} driving the pivot.
    */
-  public Pivot(PivotConfig config)
+  public Pivot(PivotConfig config, SmartMotorController smc)
   {
     m_config = config;
-    m_smc = config.getMotor();
+    m_smc = smc;
     SmartMotorControllerConfig motorConfig = m_smc.getConfig();
     DCMotor                    dcMotor     = m_smc.getDCMotor();
     MechanismGearing           gearing     = m_smc.getConfig().getGearing();
@@ -82,31 +125,36 @@ public class Pivot extends SmartPositionalMechanism
     {
       m_telemetry.setupTelemetry(getName(), m_smc);
     }
-    config.applyConfig();
 
     if (RobotBase.isSimulation())
     {
-      SmartMotorController smc = config.getMotor();
       if (config.getLowerHardLimit().isEmpty())
       {
         throw new PivotConfigurationException("Pivot lower hard limit is empty",
                                               "Cannot create simulation.",
-                                              "withHardLimit(Angle,Angle)");
+                                              "withHardLimits(Angle,Angle)");
       }
       if (config.getUpperHardLimit().isEmpty())
       {
         throw new PivotConfigurationException("Pivot upper hard limit is empty",
                                               "Cannot create simulation.",
-                                              "withHardLimit(Angle,Angle)");
+                                              "withHardLimits(Angle,Angle)");
       }
-      if (config.getStartingAngle().isEmpty())
+      if (smc.getConfig().getStartingPosition().isEmpty())
       {
         throw new PivotConfigurationException("Pivot starting angle is empty",
                                               "Cannot create simulation.",
-                                              "withStartingPosition(Angle)");
+                                              "SmartMotorControllerConfig.withStartingPosition(Angle)");
+      }
+      if (smc.getConfig().getStartingPosition().get().lt(config.getLowerHardLimit().get()) ||
+          smc.getConfig().getStartingPosition().get().gt(config.getUpperHardLimit().get()))
+      {
+        throw new PivotConfigurationException("Pivot starting angle is outside hard limits",
+                                              "Cannot create simulation.",
+                                              "SmartMotorControllerConfig.withStartingPosition(Angle)");
       }
       m_dcmotorSim = Optional.of(new DCMotorSim(LinearSystemId.createDCMotorSystem(dcMotor,
-                                                                                   config.getMOI(),
+                                                                                   smc.getConfig().getMOI(),
                                                                                    smc.getConfig().getGearing()
                                                                                       .getMechanismToRotorRatio()),
                                                 dcMotor));
@@ -119,12 +167,12 @@ public class Pivot extends SmartPositionalMechanism
                                                   pivotLength.in(Meters), pivotLength.in(Meters));
       m_mechanismLigament = m_mechanismRoot.append(new MechanismLigament2d(getName(),
                                                                            pivotLength.in(Meters),
-                                                                           config.getStartingAngle().get().in(Degrees),
+                                                                           smc.getConfig().getStartingPosition().get().in(Degrees),
                                                                            6,
                                                                            config.getSimColor()));
       m_setpointLigament = m_mechanismRoot.append(new MechanismLigament2d("Setpoint",
                                                                           pivotLength.in(Meters),
-                                                                          config.getStartingAngle().get()
+                                                                          smc.getConfig().getStartingPosition().get()
                                                                                 .in(Degrees),
                                                                           3,
                                                                           new Color8Bit(Color.kWhite)));
@@ -295,13 +343,13 @@ public class Pivot extends SmartPositionalMechanism
     {
       return new Trigger(gte(m_smc.getConfig().getMechanismUpperLimit().get()));
     }
-    if (m_config.getUpperHardLimit().isEmpty())
+    if (m_config.getUpperHardLimit().isPresent())
     {
       return gte(m_config.getUpperHardLimit().get());
     }
     throw new PivotConfigurationException("Pivot upper hard and motor controller soft limit is empty",
                                         "Cannot create max trigger.",
-                                        "withHardLimit(Angle,Angle)");
+                                        "withHardLimits(Angle,Angle)");
   }
 
   @Override
@@ -309,62 +357,15 @@ public class Pivot extends SmartPositionalMechanism
   {
     if (m_smc.getConfig().getMechanismLowerLimit().isPresent())
     {
-      return new Trigger(gte(m_smc.getConfig().getMechanismLowerLimit().get()));
+      return new Trigger(lte(m_smc.getConfig().getMechanismLowerLimit().get()));
     }
-    if (m_config.getLowerHardLimit().isEmpty())
+    if (m_config.getLowerHardLimit().isPresent())
     {
-      return gte(m_config.getLowerHardLimit().get());
+      return lte(m_config.getLowerHardLimit().get());
     }
     throw new PivotConfigurationException("Pivot lower hard and motor controller soft limit is empty",
                                         "Cannot create min trigger.",
-                                        "withHardLimit(Angle,Angle)");
-  }
-
-  @Override
-  public Command sysId(Voltage maximumVoltage, Velocity<VoltageUnit> step, Time duration)
-  {
-    SysIdRoutine routine = m_smc.sysId(maximumVoltage, step, duration);
-    Angle        max;
-    Angle        min;
-    if (m_smc.getConfig().getMechanismUpperLimit().isPresent())
-    {
-      max = m_smc.getConfig().getMechanismUpperLimit().get().minus(Degrees.of(1));
-    } else if (m_config.getUpperHardLimit().isPresent())
-    {
-      max = m_config.getUpperHardLimit().get().minus(Degrees.of(1));
-    } else
-    {
-      throw new PivotConfigurationException("Pivot upper hard and motor controller soft limit is empty",
-                                            "Cannot create SysIdRoutine.",
-                                            "withHardLimit(Angle,Angle)");
-    }
-    if (m_smc.getConfig().getMechanismLowerLimit().isPresent())
-    {
-      min = m_smc.getConfig().getMechanismLowerLimit().get().plus(Degrees.of(1));
-    } else if (m_config.getLowerHardLimit().isPresent())
-    {
-      min = m_config.getLowerHardLimit().get().plus(Degrees.of(1));
-    } else
-    {
-      throw new PivotConfigurationException("Pivot lower hard and motor controller soft limit is empty",
-                                            "Cannot create SysIdRoutine.",
-                                            "withHardLimit(Angle,Angle)");
-    }
-    Trigger maxTrigger = gte(max);
-    Trigger minTrigger = lte(min);
-
-    Command group = Commands.print("Starting SysId")
-                            .andThen(Commands.runOnce(m_smc::stopClosedLoopController))
-                            .andThen(routine.dynamic(Direction.kForward).until(maxTrigger))
-                            .andThen(routine.dynamic(Direction.kReverse).until(minTrigger))
-                            .andThen(routine.quasistatic(Direction.kForward).until(maxTrigger))
-                            .andThen(routine.quasistatic(Direction.kReverse).until(minTrigger))
-                            .finallyDo(m_smc::startClosedLoopController);
-    if (m_config.getTelemetryName().isPresent())
-    {
-      group = group.andThen(Commands.print(getName() + " SysId test done."));
-    }
-    return group.withName(m_subsystem.getName() + " SysId");
+                                        "withHardLimits(Angle,Angle)");
   }
 
   @Override
@@ -379,17 +380,11 @@ public class Pivot extends SmartPositionalMechanism
           m_smc.getMechanismPosition().lt(m_config.getLowerHardLimit().get()))
       {
         m_smc.setEncoderPosition(m_config.getLowerHardLimit().get());
-        // Stop the motor from moving further in the direction of the hard limit
-        m_dcmotorSim.get().setAngularVelocity(0);
-        m_smc.setDutyCycle(0);
       }
       if (m_config.getUpperHardLimit().isPresent() && m_dcmotorSim.get().getAngularVelocityRadPerSec() > 0 &&
           m_smc.getMechanismPosition().gt(m_config.getUpperHardLimit().get()))
       {
         m_smc.setEncoderPosition(m_config.getUpperHardLimit().get());
-        // Stop the motor from moving further in the direction of the hard limit
-        m_dcmotorSim.get().setAngularVelocity(0);
-        m_smc.setDutyCycle(0);
       }
       RoboRioSim.setVInVoltage(BatterySim.calculateDefaultBatteryLoadedVoltage(m_dcmotorSim.get()
                                                                                            .getCurrentDrawAmps()));
@@ -412,7 +407,6 @@ public class Pivot extends SmartPositionalMechanism
   @Override
   public void visualizationUpdate()
   {
-// TODO: Add setpoint ligament
     m_mechanismLigament.setAngle(getAngle().in(Degrees));
     m_setpointLigament.setAngle(m_smc.getMechanismPositionSetpoint().orElse(getAngle()).in(Degrees));
   }
@@ -452,18 +446,4 @@ public class Pivot extends SmartPositionalMechanism
     return m_config;
   }
 
-
-  @Override
-  @Deprecated
-  public void setMeasurementVelocitySetpoint(LinearVelocity velocity)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMeasurementPositionSetpoint(Distance distance)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
 }

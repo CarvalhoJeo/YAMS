@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.positional;
 
 import static edu.wpi.first.units.Units.Degrees;
@@ -7,14 +10,8 @@ import static edu.wpi.first.units.Units.Radians;
 import edu.wpi.first.math.Pair;
 import edu.wpi.first.math.geometry.Translation2d;
 import edu.wpi.first.math.geometry.Translation3d;
-import edu.wpi.first.units.VoltageUnit;
 import edu.wpi.first.units.measure.Angle;
-import edu.wpi.first.units.measure.AngularVelocity;
 import edu.wpi.first.units.measure.Distance;
-import edu.wpi.first.units.measure.LinearVelocity;
-import edu.wpi.first.units.measure.Time;
-import edu.wpi.first.units.measure.Velocity;
-import edu.wpi.first.units.measure.Voltage;
 import edu.wpi.first.wpilibj.RobotBase;
 import edu.wpi.first.wpilibj.simulation.BatterySim;
 import edu.wpi.first.wpilibj.simulation.RoboRioSim;
@@ -32,14 +29,59 @@ import yams.exceptions.DoubleJointedArmConfigurationException;
 import yams.mechanisms.config.ArmConfig;
 import yams.mechanisms.config.MechanismPositionConfig;
 import yams.motorcontrollers.SmartMotorController;
+import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.motorcontrollers.simulation.ArmSimSupplier;
 
 /**
- * Arm mechanism.
+ * A two-segment arm where each joint has its own independent motor controller.
+ *
+ * <p>Unlike a differential mechanism, the joints in a {@code DoubleJointedArm} are driven
+ * individually: the lower (shoulder) motor directly controls the first segment and the upper
+ * (elbow) motor directly controls the second segment. Kinematics are applied in software to
+ * convert between Cartesian end-effector positions and the required joint angles.</p>
+ *
+ * <p>This mechanism is well-suited to FRC scoring subsystems that require both high reach and
+ * precise end-effector placement. A long lower segment provides reach, while the upper segment
+ * allows the end-effector to be folded back under frame perimeter when traveling or extended
+ * far over field elements when scoring.</p>
+ *
+ * <h2>Construction Example</h2>
+ * <pre>{@code
+ * // Each ArmConfig must specify the motor, gearing, arm length, hard limits,
+ * // and starting angle before the DoubleJointedArm can be constructed.
+ * ArmConfig lowerConfig = new ArmConfig(lowerSMC)
+ *     .withLength(Inches.of(24))
+ *     .withHardLimits(Degrees.of(0), Degrees.of(120))
+ *     .withStartingPosition(Degrees.of(0))
+ *     .withTelemetry("Shoulder", TelemetryVerbosity.HIGH);
+ *
+ * ArmConfig upperConfig = new ArmConfig(upperSMC)
+ *     .withLength(Inches.of(20))
+ *     .withHardLimits(Degrees.of(0), Degrees.of(120))
+ *     .withStartingPosition(Degrees.of(90))
+ *     .withTelemetry("Elbow", TelemetryVerbosity.HIGH);
+ *
+ * DoubleJointedArm arm = new DoubleJointedArm(lowerConfig, upperConfig);
+ * }</pre>
+ *
+ * <h2>Control Examples</h2>
+ * <pre>{@code
+ * // Set explicit joint angles: shoulder at 45°, elbow at 90°.
+ * Command positionCommand = arm.setAngle(Degrees.of(45), Degrees.of(90));
+ *
+ * // Move to a Cartesian target (0.4 m forward, 0.6 m up) using inverse kinematics.
+ * Command ikCommand = arm.setPosition(new Translation2d(0.4, 0.6), false);
+ *
+ * // Continuously track a target while within 5 cm tolerance, then finish.
+ * Command trackCommand = arm.runTo(new Translation2d(0.5, 0.7), false, Centimeters.of(5));
+ *
+ * // Read current joint angles.
+ * Angle shoulder = arm.getLowerAngle();
+ * Angle elbow    = arm.getUpperAngle();
+ * }</pre>
  */
 public class DoubleJointedArm extends SmartPositionalMechanism
 {
-
   /**
    * Upper arm {@link SmartMotorController}
    */
@@ -93,35 +135,40 @@ public class DoubleJointedArm extends SmartPositionalMechanism
    * Constructor for the Arm mechanism.
    *
    * @param lowerConfig Lower {@link ArmConfig} to use.
+   * @param lowerSMC    {@link SmartMotorController} driving the lower joint.
    * @param upperConfig Upper {@link ArmConfig} to use.
+   * @param upperSMC    {@link SmartMotorController} driving the upper joint.
    */
-  public DoubleJointedArm(ArmConfig lowerConfig, ArmConfig upperConfig)
+  public DoubleJointedArm(ArmConfig lowerConfig, SmartMotorController lowerSMC, ArmConfig upperConfig, SmartMotorController upperSMC)
   {
     m_lowerArmConfig = lowerConfig;
     m_upperArmConfig = upperConfig;
-    m_lowerSMC = lowerConfig.getMotor();
-    m_upperSMC = upperConfig.getMotor();
-    if (lowerConfig.getMotor().getConfig().getSubsystem() != upperConfig.getMotor().getConfig().getSubsystem())
+    m_lowerSMC = lowerSMC;
+    m_upperSMC = upperSMC;
+    SmartMotorControllerConfig lowerSMCConfig = lowerSMC.getConfig();
+    SmartMotorControllerConfig upperSMCConfig = upperSMC.getConfig();
+
+    if (lowerSMCConfig.getSubsystem() != upperSMCConfig.getSubsystem())
     {
       throw new DoubleJointedArmConfigurationException("SmartMotorControllers do not have the same subsystem!",
                                                        "Cannot create commands for single subsystem.",
                                                        "withSubsystem(this)");
     }
-    m_subsystem = lowerConfig.getMotor().getConfig().getSubsystem();
+    m_subsystem = lowerSMCConfig.getSubsystem();
 
     // Check that the starting angle is defined
-    if (lowerConfig.getStartingAngle().isEmpty() || upperConfig.getStartingAngle().isEmpty())
+    if (lowerSMCConfig.getStartingPosition().isEmpty() || upperSMCConfig.getStartingPosition().isEmpty())
     {
       throw new DoubleJointedArmConfigurationException("Arm starting angle is empty",
                                                        "Cannot create simulation.",
-                                                       "withStartingPosition(Angle)");
+                                                       "SmartMotorControllerConfig.withStartingPosition(Angle)");
     }
 
     // Check that the arm lengths are defined
     if (lowerConfig.getLength().isEmpty() || upperConfig.getLength().isEmpty())
     {
       throw new DoubleJointedArmConfigurationException(
-          "Arm legnths must be defined to calculate current end position of the Double Jointed Arm!",
+          "Arm lengths must be defined to calculate current end position of the Double Jointed Arm!",
           "Cannot create mechanism",
           "withLength(Distance)");
     }
@@ -151,48 +198,47 @@ public class DoubleJointedArm extends SmartPositionalMechanism
 
     if (RobotBase.isSimulation())
     {
-
       if (lowerConfig.getLowerHardLimit().isEmpty() || upperConfig.getLowerHardLimit().isEmpty())
       {
         throw new DoubleJointedArmConfigurationException("Arm lower hard limit is empty",
                                                          "Cannot create simulation.",
-                                                         "withHardLimit(Angle,Angle)");
+                                                         "withHardLimits(Angle,Angle)");
       }
       if (lowerConfig.getUpperHardLimit().isEmpty() || upperConfig.getUpperHardLimit().isEmpty())
       {
         throw new DoubleJointedArmConfigurationException("Arm upper hard limit is empty",
                                                          "Cannot create simulation.",
-                                                         "withHardLimit(Angle,Angle)");
+                                                         "withHardLimits(Angle,Angle)");
       }
 
       // Setup Sim
       m_lowerArmSim = Optional.of(new SingleJointedArmSim(m_lowerSMC.getDCMotor(),
                                                           m_lowerSMC.getConfig().getGearing()
                                                                     .getMechanismToRotorRatio(),
-                                                          lowerConfig.getMOI(),
+                                                          lowerSMCConfig.getMOI(),
                                                           lowerConfig.getLength().get().in(Meters),
                                                           lowerConfig.getLowerHardLimit().get().in(Radians),
                                                           lowerConfig.getUpperHardLimit().get().in(Radians),
                                                           true,
-                                                          lowerConfig.getStartingAngle().get().in(Radians),
+                                                          lowerSMCConfig.getStartingPosition().get().in(Radians),
                                                           0.002 / 4096.0,
                                                           0.0));// Add noise with a std-dev of 1 tick
       m_lowerSMC.setSimSupplier(new ArmSimSupplier(m_lowerArmSim.get(), m_lowerSMC));
       m_upperArmSim = Optional.of(new SingleJointedArmSim(m_upperSMC.getDCMotor(),
                                                           m_upperSMC.getConfig().getGearing()
                                                                     .getMechanismToRotorRatio(),
-                                                          upperConfig.getMOI(),
+                                                          upperSMCConfig.getMOI(),
                                                           m_upperArmLength.in(Meters),
                                                           upperConfig.getLowerHardLimit().get().in(Radians),
                                                           upperConfig.getUpperHardLimit().get().in(Radians),
                                                           true,
-                                                          upperConfig.getStartingAngle().get().in(Radians),
+                                                          upperSMCConfig.getStartingPosition().get().in(Radians),
                                                           0.002 / 4096.0,
                                                           0.0));// Add noise with a std-dev of 1 tick
       m_upperSMC.setSimSupplier(new ArmSimSupplier(m_upperArmSim.get(), m_upperSMC));
 
-      var lowerStartingAngle = lowerConfig.getStartingAngle().get();
-      var upperStartingAngle = upperConfig.getStartingAngle().get();
+      var lowerStartingAngle = lowerSMCConfig.getStartingPosition().get();
+      var upperStartingAngle = upperSMCConfig.getStartingPosition().get();
 
       var upperArmRootPos = getJoint(m_lowerArmLength, lowerStartingAngle, m_lowerArmRootPos);
 
@@ -222,9 +268,6 @@ public class DoubleJointedArm extends SmartPositionalMechanism
       m_upperSMC.setupSimulation();
       m_lowerSMC.setupSimulation();
     }
-    // Apply configs
-    lowerConfig.applyConfig();
-    upperConfig.applyConfig();
   }
 
   /**
@@ -444,13 +487,6 @@ public class DoubleJointedArm extends SmartPositionalMechanism
            m_upperArmConfig.getTelemetryName().orElse("Upper");
   }
 
-  @Override
-  @Deprecated
-  public Trigger max()
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
   /**
    * Get the shoulder angle of the DoubleJointedArm.
    *
@@ -531,88 +567,13 @@ public class DoubleJointedArm extends SmartPositionalMechanism
     }).withName(m_subsystem.getName() + " SetDutyCycle");
   }
 
-  @Override
-  @Deprecated
-  public Command set(double dutycycle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
+    @Override
+    public Trigger max() {
+        throw new RuntimeException("Unsupported operation");
+    }
 
-  @Override
-  @Deprecated
-  public Command set(Supplier<Double> dutycyle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Command setVoltage(Voltage volts)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Command setVoltage(Supplier<Voltage> volts)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Trigger min()
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public Command sysId(Voltage maximumVoltage, Velocity<VoltageUnit> step, Time duration)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMeasurementVelocitySetpoint(LinearVelocity velocity)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMechanismVelocitySetpoint(AngularVelocity velocity)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMeasurementPositionSetpoint(Distance distance)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setMechanismPositionSetpoint(Angle angle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setVoltageSetpoint(Voltage voltage)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
-  @Override
-  @Deprecated
-  public void setDutyCycleSetpoint(double dutycycle)
-  {
-    throw new RuntimeException("Unimplemented");
-  }
-
+    @Override
+    public Trigger min() {
+        throw new  RuntimeException("Unsupported operation");
+    }
 }

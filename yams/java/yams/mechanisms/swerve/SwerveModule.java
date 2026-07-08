@@ -1,3 +1,6 @@
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
 package yams.mechanisms.swerve;
 
 import static edu.wpi.first.units.Units.MetersPerSecond;
@@ -13,14 +16,55 @@ import yams.telemetry.MechanismTelemetry;
 
 /**
  * Swerve Module
+ *
+ * <p>
+ * {@link SwerveModule} coordinates the drive motor (velocity control) and the azimuth (steer)
+ * motor (position control) that make up one corner of a swerve drivetrain.  On construction it
+ * reads the absolute encoder and seeds the azimuth relative encoder so the wheel starts at the
+ * correct angle.  Each periodic cycle you call {@link #setSwerveModuleState(SwerveModuleState)} to
+ * command both motors, and {@link #getState()} / {@link #getPosition()} to read back the current
+ * wheel velocity and heading.
+ * </p>
+ *
+ * <h2>Typical usage</h2>
+ * <p>
+ * In almost every case you should <b>not</b> instantiate {@link SwerveModule} directly.  Instead,
+ * pass one {@link yams.mechanisms.config.SwerveModuleConfig} per corner to
+ * {@link yams.mechanisms.config.SwerveDriveConfig} and let
+ * {@link yams.mechanisms.swerve.SwerveDrive} create and manage the modules internally:
+ * </p>
+ * <pre>{@code
+ * SwerveDriveConfig driveConfig = new SwerveDriveConfig()
+ *     .withSwerveModuleConfig(frontLeft, frontRight, backLeft, backRight);
+ *
+ * SwerveDrive swerveDrive = new SwerveDrive(driveConfig);
+ * }</pre>
+ *
+ * <h2>Direct instantiation (advanced)</h2>
+ * <p>
+ * If you need direct access to a module — for example when writing unit tests or custom
+ * characterisation routines — you can construct one from a fully-configured
+ * {@link yams.mechanisms.config.SwerveModuleConfig}:
+ * </p>
+ * <pre>{@code
+ * // Assumes 'frontLeftConfig' has already been built with drive/steer motors,
+ * // wheel radius, module location, absolute encoder offset, and telemetry name.
+ * SwerveModule frontLeft = new SwerveModule(frontLeftConfig);
+ *
+ * // Command a specific state (angle + speed)
+ * SwerveModuleState desiredState = new SwerveModuleState(1.5, Rotation2d.fromDegrees(45));
+ * frontLeft.setSwerveModuleState(desiredState);
+ *
+ * // Read back current state
+ * SwerveModuleState current = frontLeft.getState();
+ * }</pre>
  */
 public class SwerveModule
 {
-
   /**
    * Drive motor controller.
    */
-  protected final SmartMotorController m_dirveMotorController;
+  protected final SmartMotorController m_driveMotorController;
   /**
    * Azimuth motor controller.
    */
@@ -42,7 +86,7 @@ public class SwerveModule
   public SwerveModule(SwerveModuleConfig config)
   {
     m_config = config;
-    m_dirveMotorController = config.getDriveMotor();
+    m_driveMotorController = config.getDriveMotor();
     m_azimuthMotorController = config.getAzimuthMotor();
     if (m_config.getTelemetryName().isEmpty())
     {
@@ -59,7 +103,7 @@ public class SwerveModule
                                                            "External encoder could not be used",
                                                            "withUseExternalFeedbackEncoder(true)");
     }
-    m_telemetry.setupTelemetry("swerve/" + getName() + "/drive", m_dirveMotorController);
+    m_telemetry.setupTelemetry("swerve/" + getName() + "/drive", m_driveMotorController);
     m_telemetry.setupTelemetry("swerve/" + getName() + "/azimuth", m_azimuthMotorController);
     seedAzimuthEncoder();
   }
@@ -100,12 +144,14 @@ public class SwerveModule
    * Set the {@link SwerveModuleState} of the module.
    *
    * @param state State to set.
+   * @return The optimized {@link SwerveModuleState}.
    */
-  public void setSwerveModuleState(SwerveModuleState state)
+  public SwerveModuleState setSwerveModuleState(SwerveModuleState state)
   {
     state = m_config.getOptimizedState(state);
-    m_dirveMotorController.setVelocity(MetersPerSecond.of(state.speedMetersPerSecond));
+    m_driveMotorController.setVelocity(MetersPerSecond.of(state.speedMetersPerSecond));
     m_azimuthMotorController.setPosition(state.angle.getMeasure());
+    return state;
   }
 
   /**
@@ -115,7 +161,7 @@ public class SwerveModule
    */
   public SwerveModuleState getState()
   {
-    return new SwerveModuleState(m_dirveMotorController.getMeasurementVelocity(),
+    return new SwerveModuleState(m_driveMotorController.getMeasurementVelocity(),
                                  new Rotation2d(m_azimuthMotorController.getMechanismPosition()));
   }
 
@@ -126,7 +172,7 @@ public class SwerveModule
    */
   public SwerveModulePosition getPosition()
   {
-    return new SwerveModulePosition(m_dirveMotorController.getMeasurementPosition(),
+    return new SwerveModulePosition(m_driveMotorController.getMeasurementPosition(),
                                     new Rotation2d(m_azimuthMotorController.getMechanismPosition()));
   }
 
@@ -135,7 +181,7 @@ public class SwerveModule
    */
   public void updateTelemetry()
   {
-    m_dirveMotorController.updateTelemetry();
+    m_driveMotorController.updateTelemetry();
     m_azimuthMotorController.updateTelemetry();
     m_telemetry.updateLoopTime();
   }
@@ -145,7 +191,7 @@ public class SwerveModule
    */
   public void simIterate()
   {
-    m_dirveMotorController.simIterate();
+    m_driveMotorController.simIterate();
     m_azimuthMotorController.simIterate();
   }
 
@@ -166,6 +212,6 @@ public class SwerveModule
    */
   public SmartMotorController getDriveMotorController()
   {
-    return m_dirveMotorController;
+    return m_driveMotorController;
   }
 }

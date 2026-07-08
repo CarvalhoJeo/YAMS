@@ -1,6 +1,5 @@
-// Copyright (c) FIRST and other WPILib contributors.
-// Open Source Software; you can modify and/or share it under the terms of
-// the WPILib BSD license file in the root directory of this project.
+// Copyright (c) 2026 Yet Another Software Suite
+// SPDX-License-Identifier: LGPL-3.0-or-later
 
 package yams.telemetry;
 
@@ -9,16 +8,42 @@ import edu.wpi.first.networktables.DoubleSubscriber;
 import edu.wpi.first.networktables.DoubleTopic;
 import edu.wpi.first.networktables.NetworkTable;
 import edu.wpi.first.networktables.PubSub;
+import edu.wpi.first.util.datalog.DoubleLogEntry;
+import edu.wpi.first.wpilibj.DataLogManager;
+import edu.wpi.first.wpilibj.Timer;
 import java.util.Optional;
 import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.telemetry.SmartMotorControllerTelemetry.DoubleTelemetryField;
 
 /**
  * Double Telemetry for SmartMotorControllers.
+ *
+ * <p>A lightweight wrapper that publishes a single {@code double} value to NetworkTables and/or
+ * a WPILib DataLog, with optional unit metadata consumed by Advantage Scope and Elastic. It is
+ * used internally by {@link SmartMotorControllerTelemetry} to track numeric fields such as
+ * position, velocity, current, and PID gains — but it can also be constructed directly when
+ * you need a standalone numeric entry.
+ *
+ * <h2>Example</h2>
+ * <pre>{@code
+ * // Create and publish a double entry for shooter velocity under the Shooter table.
+ * DoubleTelemetry velocity = new DoubleTelemetry(
+ *     "velocity",                                       // NetworkTables key
+ *     0.0,                                              // default value
+ *     SmartMotorControllerTelemetry.DoubleTelemetryField.MechanismVelocity,
+ *     false,                                            // not tunable
+ *     "rotations_per_second");                          // unit label
+ *
+ * NetworkTable shooterTable = NetworkTableInstance.getDefault().getTable("Shooter");
+ * velocity.enable();
+ * velocity.setupNetworkTable(shooterTable);
+ *
+ * // In periodic:
+ * velocity.set(shooter.getVelocityRPS());
+ * }</pre>
  */
 public class DoubleTelemetry
 {
-
   /**
    * Field representing.
    */
@@ -67,7 +92,14 @@ public class DoubleTelemetry
    * Data table.
    */
   private       Optional<NetworkTable>     dataTable    = Optional.empty();
+  /**
+   * NT4 Topic of this entry.
+   */
   private       DoubleTopic                topic;
+  /**
+   * {@link DoubleLogEntry} representing this entry.
+   */
+  private       Optional<DoubleLogEntry>   dataLogEntry = Optional.empty();
 
 
   /**
@@ -117,8 +149,6 @@ public class DoubleTelemetry
                      topic.publishEx("double", "{\"units\": \"" + unit + "\"}") :
                      topic.publish();
       subscriber = Optional.of(topic.subscribe(defaultValue));
-//      if (!unit.equals("none"))
-//      {topic.setProperties("{\"units\":\"" + unit + "\"}");}
       subPublisher.setDefault(defaultValue);
     } else
     {
@@ -127,9 +157,25 @@ public class DoubleTelemetry
       publisher = Optional.of(!unit.equals("none") ?
                               topic.publishEx("double", "{\"units\": \"" + unit + "\"}") :
                               topic.publish());
-//      if (!unit.equals("none"))
-//      {topic.setProperties("{\"units\": \"" + unit + "\"}");}
       publisher.get().setDefault(defaultValue);
+    }
+  }
+
+  /**
+   * Setup the {@link edu.wpi.first.util.datalog.DataLog} with this entry.
+   *
+   * @param prefix The prefix to this entry in {@link edu.wpi.first.util.datalog.DataLog}
+   */
+  public void setupDataLog(String prefix)
+  {
+    if (!tunable)
+    {
+      if (!prefix.endsWith("/"))
+      {prefix += "/";}
+      prefix += unit + "/";
+      dataLogEntry = Optional.of(new DoubleLogEntry(DataLogManager.getLog(),
+                                                    prefix + key,
+                                                    (long) Timer.getFPGATimestamp()));
     }
   }
 
@@ -191,6 +237,10 @@ public class DoubleTelemetry
   {
     if (!enabled)
     {return false;}
+    if (dataLogEntry.isPresent())
+    {
+      dataLogEntry.get().append(value, (long) Timer.getFPGATimestamp());
+    }
     if (subscriber.isPresent())
     {
       double tuningValue = subscriber.get().get(defaultValue);
