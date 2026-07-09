@@ -10,6 +10,7 @@ plugins {
   id 'org.wpilib.NativeUtils' version '2027.10.0'
   id 'org.wpilib.GradleJni' version '2027.0.0'
   id 'org.wpilib.GradleVsCode' version '2027.0.0'
+  id 'org.wpilib.GradleRIO' version '2027.0.0-alpha-6'
 }
 
 // WPILib Version
@@ -48,6 +49,9 @@ apply from: 'config.gradle'
 
 // Apply Java configuration
 dependencies {
+    implementation wpi.java.deps.wpilib()
+    implementation wpi.java.vendor.java()
+
     implementation "org.wpilib.cscore:cscore-java:$wpilibVersion"
     implementation "org.wpilib.cameraserver:cameraserver-java:$wpilibVersion"
     implementation "org.wpilib.ntcore:ntcore-java:$wpilibVersion"
