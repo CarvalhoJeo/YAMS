@@ -29,9 +29,9 @@ import com.revrobotics.spark.ClosedLoopSlot;
 import com.revrobotics.spark.FeedbackSensor;
 import com.revrobotics.spark.SparkAbsoluteEncoder;
 import com.revrobotics.spark.SparkBase;
-import com.revrobotics.spark.SparkBase.ControlType;
 import com.revrobotics.spark.SparkClosedLoopController;
 import com.revrobotics.spark.SparkFlex;
+import com.revrobotics.spark.SparkLowLevel.ControlType;
 import com.revrobotics.spark.SparkMax;
 import com.revrobotics.spark.SparkSim;
 import com.revrobotics.spark.config.MAXMotionConfig.MAXMotionPositionMode;
@@ -40,9 +40,9 @@ import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkFlexConfig;
 import com.revrobotics.spark.config.SparkMaxConfig;
 import com.revrobotics.util.StatusLogger;
-import org.wpilib.math.Pair;
-import org.wpilib.math.system.plant.DCMotor;
-import org.wpilib.math.system.plant.LinearSystemId;
+import org.wpilib.math.util.Pair;
+import org.wpilib.math.system.DCMotor;
+import org.wpilib.math.system.LinearSystem;
 import org.wpilib.math.trajectory.ExponentialProfile;
 import org.wpilib.math.trajectory.TrapezoidProfile;
 import org.wpilib.math.trajectory.TrapezoidProfile.Constraints;
@@ -58,11 +58,11 @@ import org.wpilib.units.measure.Temperature;
 import org.wpilib.units.measure.Time;
 import org.wpilib.units.measure.Velocity;
 import org.wpilib.units.measure.Voltage;
-import org.wpilib.wpilibj.DriverStation;
-import org.wpilib.wpilibj.Notifier;
-import org.wpilib.wpilibj.RobotBase;
-import org.wpilib.time;
-import org.wpilib.wpilib.simulation.DCMotorSim;
+import org.wpilib.driverstation.DriverStation;
+import org.wpilib.framework.RobotBase;
+import org.wpilib.simulation.DCMotorSim;
+import org.wpilib.system.Notifier;
+import org.wpilib.system.Timer;
 import java.util.List;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -249,6 +249,8 @@ public class SparkWrapper extends SmartMotorController
       {
         sparkSim = Optional.of(new SparkSim(m_spark, m_motor));
         sparkRelativeEncoderSim = Optional.of(sparkSim.get().getRelativeEncoderSim());
+        // TODO(2027): LinearSystemId.createDCMotorSystem was removed. Nearest replacements in
+        // org.wpilib.math.system.Models don't share the same signature — pick the correct physics model.
         m_dcMotorSim = Optional.of(new DCMotorSim(LinearSystemId.createDCMotorSystem(m_motor,
                                                                                      m_config.getMOI(),
                                                                                      m_config.getGearing()

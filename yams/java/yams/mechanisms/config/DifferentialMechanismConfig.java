@@ -3,17 +3,17 @@
 
 package yams.mechanisms.config;
 
-import static edu.wpi.first.units.Units.KilogramSquareMeters;
-import static edu.wpi.first.units.Units.Kilograms;
-import static edu.wpi.first.units.Units.Meters;
+import static org.wpilib.units.Units.KilogramSquareMeters;
+import static org.wpilib.units.Units.Kilograms;
+import static org.wpilib.units.Units.Meters;
 
-import edu.wpi.first.units.measure.Angle;
-import edu.wpi.first.units.measure.Distance;
-import edu.wpi.first.units.measure.Mass;
-import edu.wpi.first.units.measure.MomentOfInertia;
-import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
-import edu.wpi.first.wpilibj.util.Color;
-import edu.wpi.first.wpilibj.util.Color8Bit;
+import org.wpilib.units.measure.Angle;
+import org.wpilib.units.measure.Distance;
+import org.wpilib.units.measure.Mass;
+import org.wpilib.units.measure.MomentOfInertia;
+import org.wpilib.simulation.SingleJointedArmSim;
+import org.wpilib.util.Color;
+import org.wpilib.util.Color8Bit;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import java.util.function.Supplier;

@@ -3,28 +3,28 @@
 
 package yams.mechanisms.velocity;
 
-import static edu.wpi.first.units.Units.Degrees;
-import static edu.wpi.first.units.Units.Inches;
-import static edu.wpi.first.units.Units.Meters;
-import static edu.wpi.first.units.Units.RPM;
-import edu.wpi.first.math.filter.Debouncer.DebounceType;
-import edu.wpi.first.math.geometry.Rotation3d;
-import edu.wpi.first.math.geometry.Translation3d;
-import edu.wpi.first.math.system.plant.DCMotor;
-import edu.wpi.first.math.system.plant.LinearSystemId;
-import edu.wpi.first.units.measure.AngularVelocity;
-import edu.wpi.first.units.measure.Distance;
-import edu.wpi.first.units.measure.LinearVelocity;
-import edu.wpi.first.wpilibj.RobotBase;
-import edu.wpi.first.wpilibj.simulation.BatterySim;
-import edu.wpi.first.wpilibj.simulation.DCMotorSim;
-import edu.wpi.first.wpilibj.simulation.RoboRioSim;
-import edu.wpi.first.wpilibj.smartdashboard.Mechanism2d;
-import edu.wpi.first.wpilibj.smartdashboard.MechanismLigament2d;
-import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
-import edu.wpi.first.wpilibj2.command.Command;
-import edu.wpi.first.wpilibj2.command.Commands;
-import edu.wpi.first.wpilibj2.command.button.Trigger;
+import static org.wpilib.units.Units.Degrees;
+import static org.wpilib.units.Units.Inches;
+import static org.wpilib.units.Units.Meters;
+import static org.wpilib.units.Units.RPM;
+import org.wpilib.math.filter.Debouncer.DebounceType;
+import org.wpilib.math.geometry.Rotation3d;
+import org.wpilib.math.geometry.Translation3d;
+import org.wpilib.math.system.plant.DCMotor;
+import org.wpilib.math.system.plant.LinearSystemId;
+import org.wpilib.units.measure.AngularVelocity;
+import org.wpilib.units.measure.Distance;
+import org.wpilib.units.measure.LinearVelocity;
+import org.wpilib.wpilibj.RobotBase;
+import org.wpilib.simulation.BatterySim;
+import org.wpilib.simulation.DCMotorSim;
+import org.wpilib.simulation.RoboRioSim;
+import org.wpilib.smartdashboard.Mechanism2d;
+import org.wpilib.smartdashboard.MechanismLigament2d;
+import org.wpilib.smartdashboard.SmartDashboard;
+import org.wpilib.command2.Command;
+import org.wpilib.command2.Commands;
+import org.wpilib.command2.button.Trigger;
 import java.util.Optional;
 import java.util.function.Supplier;
 import yams.gearing.MechanismGearing;
@@ -55,8 +55,8 @@ import yams.motorcontrollers.simulation.DCMotorSimSupplier;
  *
  * <p><b>Unsupported operations:</b> {@link #max()} and {@link #min()} are not supported for
  * velocity mechanisms and will throw {@link java.lang.UnsupportedOperationException} if called.
- * Use {@link #isNear(edu.wpi.first.units.measure.AngularVelocity,
- * edu.wpi.first.units.measure.AngularVelocity)} or {@link #gte}/{@link #lte} triggers instead.</p>
+ * Use {@link #isNear(org.wpilib.units.measure.AngularVelocity,
+ * org.wpilib.units.measure.AngularVelocity)} or {@link #gte}/{@link #lte} triggers instead.</p>
  *
  * <p>Call {@link #simIterate()} and {@link #updateTelemetry()} inside your subsystem's
  * {@code periodic()} method to keep simulation state and NetworkTables up to date:</p>
@@ -195,7 +195,7 @@ public class FlyWheel extends SmartVelocityMechanism
    *
    * @param velocity {@link Supplier} of {@link LinearVelocity} or {@link AngularVelocity}
    * @param <T>      Must be a {@link LinearVelocity} or {@link AngularVelocity}
-   * @return {@link edu.wpi.first.wpilibj2.command.RunCommand} which runs the FlyWheel to the desired velocity with the
+   * @return {@link org.wpilib.command2.RunCommand} which runs the FlyWheel to the desired velocity with the
    * closed loop controller.
    */
   public <T> Command run(Supplier<T> velocity)

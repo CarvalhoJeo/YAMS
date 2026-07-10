@@ -6,11 +6,11 @@
 
 package frc.robot;
 
-import static edu.wpi.first.units.Units.RPM;
-import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj2.command.Command;
-import edu.wpi.first.wpilibj2.command.Commands;
-import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import static org.wpilib.units.Units.RPM;
+import org.wpilib.wpilibj.DriverStation;
+import org.wpilib.command2.Command;
+import org.wpilib.command2.Commands;
+import org.wpilib.command2.button.CommandXboxController;
 import frc.robot.subsystems.ShooterSubsystem;
 
 

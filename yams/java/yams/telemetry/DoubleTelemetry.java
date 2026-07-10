@@ -3,14 +3,14 @@
 
 package yams.telemetry;
 
-import edu.wpi.first.networktables.DoublePublisher;
-import edu.wpi.first.networktables.DoubleSubscriber;
-import edu.wpi.first.networktables.DoubleTopic;
-import edu.wpi.first.networktables.NetworkTable;
-import edu.wpi.first.networktables.PubSub;
-import edu.wpi.first.util.datalog.DoubleLogEntry;
-import edu.wpi.first.wpilibj.DataLogManager;
-import edu.wpi.first.wpilibj.Timer;
+import org.wpilib.networktables.DoublePublisher;
+import org.wpilib.networktables.DoubleSubscriber;
+import org.wpilib.networktables.DoubleTopic;
+import org.wpilib.networktables.NetworkTable;
+import org.wpilib.networktables.PubSub;
+import org.wpilib.datalog.DoubleLogEntry;
+import org.wpilib.wpilibj.DataLogManager;
+import org.wpilib.wpilibj.Timer;
 import java.util.Optional;
 import yams.motorcontrollers.SmartMotorControllerConfig;
 import yams.telemetry.SmartMotorControllerTelemetry.DoubleTelemetryField;
@@ -162,9 +162,9 @@ public class DoubleTelemetry
   }
 
   /**
-   * Setup the {@link edu.wpi.first.util.datalog.DataLog} with this entry.
+   * Setup the {@link org.wpilib.datalog.DataLog} with this entry.
    *
-   * @param prefix The prefix to this entry in {@link edu.wpi.first.util.datalog.DataLog}
+   * @param prefix The prefix to this entry in {@link org.wpilib.datalog.DataLog}
    */
   public void setupDataLog(String prefix)
   {

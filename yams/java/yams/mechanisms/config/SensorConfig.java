@@ -3,10 +3,10 @@
 
 package yams.mechanisms.config;
 
-import static edu.wpi.first.units.Units.Seconds;
+import static org.wpilib.units.Units.Seconds;
 
-import edu.wpi.first.units.measure.Time;
-import edu.wpi.first.wpilibj.DriverStation;
+import org.wpilib.units.measure.Time;
+import org.wpilib.wpilibj.DriverStation;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -36,7 +36,7 @@ import yams.motorcontrollers.simulation.SensorData;
  *
  * <h2>Example</h2>
  * <pre>{@code
- * import static edu.wpi.first.units.Units.Seconds;
+ * import static org.wpilib.units.Units.Seconds;
  * import yams.mechanisms.config.SensorConfig;
  *
  * // Hardware limit switch wired to a DIO channel

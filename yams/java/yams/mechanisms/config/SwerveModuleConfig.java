@@ -3,17 +3,17 @@
 
 package yams.mechanisms.config;
 
-import static edu.wpi.first.units.Units.Meters;
-import static edu.wpi.first.units.Units.MetersPerSecond;
-import static edu.wpi.first.units.Units.Rotations;
+import static org.wpilib.units.Units.Meters;
+import static org.wpilib.units.Units.MetersPerSecond;
+import static org.wpilib.units.Units.Rotations;
 
-import edu.wpi.first.math.filter.Debouncer;
-import edu.wpi.first.math.geometry.Rotation2d;
-import edu.wpi.first.math.geometry.Translation2d;
-import edu.wpi.first.math.kinematics.SwerveModuleState;
-import edu.wpi.first.units.measure.Angle;
-import edu.wpi.first.units.measure.Distance;
-import edu.wpi.first.units.measure.LinearVelocity;
+import org.wpilib.math.filter.Debouncer;
+import org.wpilib.math.geometry.Rotation2d;
+import org.wpilib.math.geometry.Translation2d;
+import org.wpilib.math.kinematics.SwerveModuleState;
+import org.wpilib.units.measure.Angle;
+import org.wpilib.units.measure.Distance;
+import org.wpilib.units.measure.LinearVelocity;
 import java.util.Optional;
 import java.util.function.DoubleSupplier;
 import java.util.function.Supplier;
@@ -33,10 +33,10 @@ import yams.motorcontrollers.SmartMotorControllerConfig.TelemetryVerbosity;
  * swerve module using TalonFX motors and a CANcoder absolute encoder.
  * </p>
  * <pre>{@code
- * import static edu.wpi.first.units.Units.*;
+ * import static org.wpilib.units.Units.*;
  * import com.ctre.phoenix6.hardware.TalonFX;
  * import com.ctre.phoenix6.hardware.CANcoder;
- * import edu.wpi.first.math.system.plant.DCMotor;
+ * import org.wpilib.math.system.plant.DCMotor;
  * import yams.motorcontrollers.SmartMotorControllerConfig;
  * import yams.motorcontrollers.SmartMotorControllerConfig.ControlMode;
  * import yams.motorcontrollers.SmartMotorController;
@@ -109,7 +109,7 @@ public class SwerveModuleConfig
   private GearBox                        absoluteEncoderGearbox        = new GearBox(new double[]{1});
   /**
    * Swerve module state optimization using
-   * {@link edu.wpi.first.math.kinematics.SwerveModuleState#optimize(Rotation2d)}.
+   * {@link org.wpilib.math.kinematics.SwerveModuleState#optimize(Rotation2d)}.
    */
   private boolean                        swerveModuleStateOptimization = true;
   /**
@@ -399,7 +399,7 @@ public class SwerveModuleConfig
   }
 
   /**
-   * Use {@link edu.wpi.first.math.kinematics.SwerveModuleState#optimize(Rotation2d)} to optimize each state.
+   * Use {@link org.wpilib.math.kinematics.SwerveModuleState#optimize(Rotation2d)} to optimize each state.
    *
    * @param swerveModuleStateOptimization True to enable optimization, false otherwise.
    * @return {@link SwerveModuleConfig} for chaining.

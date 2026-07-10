@@ -3,12 +3,12 @@
 
 package yams.mechanisms.swerve;
 
-import static edu.wpi.first.units.Units.MetersPerSecond;
+import static org.wpilib.units.Units.MetersPerSecond;
 
-import edu.wpi.first.math.geometry.Rotation2d;
-import edu.wpi.first.math.kinematics.SwerveModulePosition;
-import edu.wpi.first.math.kinematics.SwerveModuleState;
-import edu.wpi.first.wpilibj.RobotBase;
+import org.wpilib.math.geometry.Rotation2d;
+import org.wpilib.math.kinematics.SwerveModulePosition;
+import org.wpilib.math.kinematics.SwerveModuleState;
+import org.wpilib.wpilibj.RobotBase;
 import yams.exceptions.SmartMotorControllerConfigurationException;
 import yams.mechanisms.config.SwerveModuleConfig;
 import yams.motorcontrollers.SmartMotorController;

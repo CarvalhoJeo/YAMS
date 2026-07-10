@@ -3,16 +3,16 @@
 
 package frc.robot.subsystems;
 
-import static edu.wpi.first.units.Units.Inches;
-import static edu.wpi.first.units.Units.Pounds;
+import static org.wpilib.units.Units.Inches;
+import static org.wpilib.units.Units.Pounds;
 
 import com.ctre.phoenix6.hardware.TalonFX;
-import edu.wpi.first.math.controller.SimpleMotorFeedforward;
-import edu.wpi.first.math.system.plant.DCMotor;
-import edu.wpi.first.units.measure.AngularVelocity;
-import edu.wpi.first.units.measure.LinearVelocity;
-import edu.wpi.first.wpilibj2.command.Command;
-import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import org.wpilib.math.controller.SimpleMotorFeedforward;
+import org.wpilib.math.system.plant.DCMotor;
+import org.wpilib.units.measure.AngularVelocity;
+import org.wpilib.units.measure.LinearVelocity;
+import org.wpilib.command2.Command;
+import org.wpilib.command2.SubsystemBase;
 import java.util.function.Supplier;
 import yams.gearing.GearBox;
 import yams.gearing.MechanismGearing;
@@ -65,7 +65,7 @@ public class ShooterSubsystem extends SubsystemBase
    * Set the shooter velocity.
    *
    * @param speed Speed to set.
-   * @return {@link edu.wpi.first.wpilibj2.command.RunCommand}
+   * @return {@link org.wpilib.command2.RunCommand}
    */
   public Command setVelocity(AngularVelocity speed) {return shooter.run(speed);}
 
@@ -73,7 +73,7 @@ public class ShooterSubsystem extends SubsystemBase
    * Set the dutycycle of the shooter.
    *
    * @param dutyCycle DutyCycle to set.
-   * @return {@link edu.wpi.first.wpilibj2.command.RunCommand}
+   * @return {@link org.wpilib.command2.RunCommand}
    */
   public Command set(double dutyCycle) {return shooter.set(dutyCycle);}
 

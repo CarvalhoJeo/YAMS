@@ -3,35 +3,35 @@
 
 package yams.math;
 
-import static edu.wpi.first.units.Units.KilogramSquareMeters;
-import static edu.wpi.first.units.Units.Kilograms;
-import static edu.wpi.first.units.Units.Meters;
-import static edu.wpi.first.units.Units.MetersPerSecond;
-import static edu.wpi.first.units.Units.Milliseconds;
-import static edu.wpi.first.units.Units.Radians;
-import static edu.wpi.first.units.Units.RadiansPerSecond;
-import static edu.wpi.first.units.Units.Seconds;
-import static edu.wpi.first.units.Units.Volts;
+import static org.wpilib.units.Units.KilogramSquareMeters;
+import static org.wpilib.units.Units.Kilograms;
+import static org.wpilib.units.Units.Meters;
+import static org.wpilib.units.Units.MetersPerSecond;
+import static org.wpilib.units.Units.Milliseconds;
+import static org.wpilib.units.Units.Radians;
+import static org.wpilib.units.Units.RadiansPerSecond;
+import static org.wpilib.units.Units.Seconds;
+import static org.wpilib.units.Units.Volts;
 
-import edu.wpi.first.math.Nat;
-import edu.wpi.first.math.VecBuilder;
-import edu.wpi.first.math.Vector;
-import edu.wpi.first.math.controller.LinearQuadraticRegulator;
-import edu.wpi.first.math.estimator.KalmanFilter;
-import edu.wpi.first.math.numbers.N1;
-import edu.wpi.first.math.numbers.N2;
-import edu.wpi.first.math.system.LinearSystem;
-import edu.wpi.first.math.system.LinearSystemLoop;
-import edu.wpi.first.math.system.plant.DCMotor;
-import edu.wpi.first.math.system.plant.LinearSystemId;
-import edu.wpi.first.units.measure.Angle;
-import edu.wpi.first.units.measure.AngularVelocity;
-import edu.wpi.first.units.measure.Distance;
-import edu.wpi.first.units.measure.LinearVelocity;
-import edu.wpi.first.units.measure.Mass;
-import edu.wpi.first.units.measure.MomentOfInertia;
-import edu.wpi.first.units.measure.Time;
-import edu.wpi.first.units.measure.Voltage;
+import org.wpilib.math.Nat;
+import org.wpilib.math.VecBuilder;
+import org.wpilib.math.Vector;
+import org.wpilib.math.controller.LinearQuadraticRegulator;
+import org.wpilib.math.estimator.KalmanFilter;
+import org.wpilib.math.numbers.N1;
+import org.wpilib.math.numbers.N2;
+import org.wpilib.math.system.LinearSystem;
+import org.wpilib.math.system.LinearSystemLoop;
+import org.wpilib.math.system.plant.DCMotor;
+import org.wpilib.math.system.plant.LinearSystemId;
+import org.wpilib.units.measure.Angle;
+import org.wpilib.units.measure.AngularVelocity;
+import org.wpilib.units.measure.Distance;
+import org.wpilib.units.measure.LinearVelocity;
+import org.wpilib.units.measure.Mass;
+import org.wpilib.units.measure.MomentOfInertia;
+import org.wpilib.units.measure.Time;
+import org.wpilib.units.measure.Voltage;
 import java.util.Optional;
 import java.util.OptionalDouble;
 import yams.gearing.MechanismGearing;
@@ -51,7 +51,7 @@ import yams.gearing.MechanismGearing;
  *
  * <h2>Example — Arm LQR configuration</h2>
  * <pre>{@code
- * import static edu.wpi.first.units.Units.*;
+ * import static org.wpilib.units.Units.*;
  *
  * LQRConfig config = new LQRConfig(
  *         DCMotor.getNEO(1),
@@ -116,24 +116,24 @@ public class LQRConfig
    */
   private       Optional<LQRType>            m_type               = Optional.empty();
   /**
-   * {@link DCMotor} for the {@link edu.wpi.first.math.controller.LinearQuadraticRegulator}.
+   * {@link DCMotor} for the {@link org.wpilib.math.controller.LinearQuadraticRegulator}.
    */
   private final DCMotor                      m_motor;
   /**
-   * {@link MechanismGearing} for the {@link edu.wpi.first.math.controller.LinearQuadraticRegulator}.
+   * {@link MechanismGearing} for the {@link org.wpilib.math.controller.LinearQuadraticRegulator}.
    */
   private final MechanismGearing             m_gearing;
   /**
-   * {@link MomentOfInertia} for the {@link edu.wpi.first.math.controller.LinearQuadraticRegulator}.
+   * {@link MomentOfInertia} for the {@link org.wpilib.math.controller.LinearQuadraticRegulator}.
    */
   private final MomentOfInertia              m_moi;
   /**
-   * Loop time for the {@link edu.wpi.first.math.controller.LinearQuadraticRegulator}. Could be faster if using
-   * {@link edu.wpi.first.wpilibj.Notifier}s.
+   * Loop time for the {@link org.wpilib.math.controller.LinearQuadraticRegulator}. Could be faster if using
+   * {@link org.wpilib.wpilibj.Notifier}s.
    */
   private       Time                         m_period             = Milliseconds.of(20);
   /**
-   * Maximum voltage for the {@link edu.wpi.first.math.system.LinearSystemLoop}. Default is 12v.
+   * Maximum voltage for the {@link org.wpilib.math.system.LinearSystemLoop}. Default is 12v.
    */
   private       Voltage                      m_maxVoltage         = Volts.of(12);
   /**
@@ -174,9 +174,9 @@ public class LQRConfig
   /**
    * Create a new LQR Configuration.
    *
-   * @param motor   {@link DCMotor} for the {@link edu.wpi.first.math.controller.LinearQuadraticRegulator}.
-   * @param gearing {@link MechanismGearing} for the {@link edu.wpi.first.math.controller.LinearQuadraticRegulator}.
-   * @param moi     {@link MomentOfInertia} for the {@link edu.wpi.first.math.controller.LinearQuadraticRegulator}.
+   * @param motor   {@link DCMotor} for the {@link org.wpilib.math.controller.LinearQuadraticRegulator}.
+   * @param gearing {@link MechanismGearing} for the {@link org.wpilib.math.controller.LinearQuadraticRegulator}.
+   * @param moi     {@link MomentOfInertia} for the {@link org.wpilib.math.controller.LinearQuadraticRegulator}.
    */
   public LQRConfig(DCMotor motor, MechanismGearing gearing, MomentOfInertia moi)
   {
@@ -214,7 +214,7 @@ public class LQRConfig
   }
 
   /**
-   * Set the maximum voltage for the {@link edu.wpi.first.math.system.LinearSystemLoop}.
+   * Set the maximum voltage for the {@link org.wpilib.math.system.LinearSystemLoop}.
    *
    * @param voltage Maximum voltage output.
    * @return {@link LQRConfig} for chaining.

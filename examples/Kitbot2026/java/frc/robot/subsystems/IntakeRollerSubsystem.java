@@ -4,7 +4,7 @@
 package frc.robot.subsystems;
 
 
-import static edu.wpi.first.units.Units.Amps;
+import static org.wpilib.units.Units.Amps;
 
 import com.revrobotics.sim.SparkMaxSim;
 import com.revrobotics.spark.SparkBase.PersistMode;
@@ -13,13 +13,13 @@ import com.revrobotics.spark.SparkLowLevel.MotorType;
 import com.revrobotics.spark.SparkMax;
 import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
 import com.revrobotics.spark.config.SparkMaxConfig;
-import edu.wpi.first.math.system.plant.DCMotor;
-import edu.wpi.first.math.system.plant.LinearSystemId;
-import edu.wpi.first.units.measure.Current;
-import edu.wpi.first.wpilibj.simulation.FlywheelSim;
-import edu.wpi.first.wpilibj.simulation.RoboRioSim;
-import edu.wpi.first.wpilibj2.command.Command;
-import edu.wpi.first.wpilibj2.command.SubsystemBase;
+import org.wpilib.math.system.plant.DCMotor;
+import org.wpilib.math.system.plant.LinearSystemId;
+import org.wpilib.units.measure.Current;
+import org.wpilib.simulation.FlywheelSim;
+import org.wpilib.simulation.RoboRioSim;
+import org.wpilib.command2.Command;
+import org.wpilib.command2.SubsystemBase;
 
 /**
  * Duty-cycle roller for the Kitbot 2026 intake. Spins one Neo Vortex to

@@ -3,15 +3,15 @@
 
 package frc.robot.subsystems;
 
-import static edu.wpi.first.units.Units.DegreesPerSecond;
+import static org.wpilib.units.Units.DegreesPerSecond;
 
 import java.util.function.Supplier;
 
-import edu.wpi.first.math.controller.PIDController;
-import edu.wpi.first.units.measure.Angle;
-import edu.wpi.first.units.measure.AngularVelocity;
-import edu.wpi.first.wpilibj.DriverStation;
-import edu.wpi.first.wpilibj2.command.Command;
+import org.wpilib.math.controller.PIDController;
+import org.wpilib.units.measure.Angle;
+import org.wpilib.units.measure.AngularVelocity;
+import org.wpilib.wpilibj.DriverStation;
+import org.wpilib.command2.Command;
 
 public class ShooterSubsystem {
     // Holds and manages turret, hood and flywheel

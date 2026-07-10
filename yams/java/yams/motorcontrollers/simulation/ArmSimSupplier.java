@@ -3,24 +3,24 @@
 
 package yams.motorcontrollers.simulation;
 
-import static edu.wpi.first.units.Units.Amps;
-import static edu.wpi.first.units.Units.Microsecond;
-import static edu.wpi.first.units.Units.Milliseconds;
-import static edu.wpi.first.units.Units.Radians;
-import static edu.wpi.first.units.Units.RadiansPerSecond;
-import static edu.wpi.first.units.Units.RotationsPerSecond;
-import static edu.wpi.first.units.Units.Seconds;
-import static edu.wpi.first.units.Units.Volts;
+import static org.wpilib.units.Units.Amps;
+import static org.wpilib.units.Units.Microsecond;
+import static org.wpilib.units.Units.Milliseconds;
+import static org.wpilib.units.Units.Radians;
+import static org.wpilib.units.Units.RadiansPerSecond;
+import static org.wpilib.units.Units.RotationsPerSecond;
+import static org.wpilib.units.Units.Seconds;
+import static org.wpilib.units.Units.Volts;
 
-import edu.wpi.first.math.system.plant.DCMotor;
-import edu.wpi.first.units.measure.Angle;
-import edu.wpi.first.units.measure.AngularAcceleration;
-import edu.wpi.first.units.measure.AngularVelocity;
-import edu.wpi.first.units.measure.Current;
-import edu.wpi.first.units.measure.Time;
-import edu.wpi.first.units.measure.Voltage;
-import edu.wpi.first.wpilibj.simulation.RoboRioSim;
-import edu.wpi.first.wpilibj.simulation.SingleJointedArmSim;
+import org.wpilib.math.system.plant.DCMotor;
+import org.wpilib.units.measure.Angle;
+import org.wpilib.units.measure.AngularAcceleration;
+import org.wpilib.units.measure.AngularVelocity;
+import org.wpilib.units.measure.Current;
+import org.wpilib.units.measure.Time;
+import org.wpilib.units.measure.Voltage;
+import org.wpilib.simulation.RoboRioSim;
+import org.wpilib.simulation.SingleJointedArmSim;
 import java.util.function.Supplier;
 import yams.gearing.MechanismGearing;
 import yams.math.DerivativeTimeFilter;
@@ -29,7 +29,7 @@ import yams.motorcontrollers.SmartMotorController;
 
 /**
  * ArmSim Supplier — simulates a single-jointed arm mechanism using WPILib's
- * {@link edu.wpi.first.wpilibj.simulation.SingleJointedArmSim}.
+ * {@link org.wpilib.simulation.SingleJointedArmSim}.
  *
  * <p>
  * This supplier steps WPILib's {@code SingleJointedArmSim} physics model each control loop and
