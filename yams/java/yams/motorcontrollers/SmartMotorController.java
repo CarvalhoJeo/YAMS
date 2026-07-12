@@ -17,7 +17,7 @@ import static org.wpilib.units.Units.Seconds;
 import static org.wpilib.units.Units.Volts;
 
 import org.wpilib.driverstation.Alert;
-import org.wpilib.driverstation.DriverStation;
+import org.wpilib.driverstation.internal.DriverStationBackend;
 import org.wpilib.framework.RobotBase;
 import org.wpilib.math.controller.ArmFeedforward;
 import org.wpilib.math.controller.ElevatorFeedforward;
@@ -28,7 +28,6 @@ import org.wpilib.math.system.DCMotor;
 import org.wpilib.math.trajectory.ExponentialProfile;
 import org.wpilib.math.trajectory.TrapezoidProfile;
 import org.wpilib.math.trajectory.TrapezoidProfile.State;
-import org.wpilib.math.util.MathUtil;
 import org.wpilib.math.util.Pair;
 import org.wpilib.networktables.NetworkTable;
 import org.wpilib.networktables.NetworkTableInstance;
@@ -354,7 +353,7 @@ public abstract class SmartMotorController
       {
         if (setpointPosition.get().lt(mechLowerLimit.get()))
         {
-          DriverStation.reportWarning("[WARNING] Setpoint is lower than Mechanism " +
+          DriverStationBackend.reportWarning("[WARNING] Setpoint is lower than Mechanism " +
                                       (m_config.getTelemetryName().isPresent() ? m_config.getTelemetryName().get()
                                                                                : "Unnamed smart motor") +
                                       " lower limit, changing setpoint to lower limit.", false);
@@ -365,7 +364,7 @@ public abstract class SmartMotorController
       {
         if (setpointPosition.get().gt(mechUpperLimit.get()))
         {
-          DriverStation.reportWarning("[WARNING] Setpoint is higher than Mechanism " +
+          DriverStationBackend.reportWarning("[WARNING] Setpoint is higher than Mechanism " +
                                       (m_config.getTelemetryName().isPresent() ? getName()
                                                                                : "Unnamed smart motor") +
                                       " upper limit, changing setpoint to upper limit.", false);
@@ -524,7 +523,7 @@ public abstract class SmartMotorController
         var nextVelocitySetpoint = RotationsPerSecond.of(
             m_trapezoidProfile.isPresent() ? nextTrapState.get().velocity
                                            : (m_expoProfile.isPresent() ? nextExpoState.get().velocity : 0.0));
-        feedforward.set(ff.calculateWithVelocities(getMechanismPosition().in(Radians),
+        feedforward.set(ff.calculate(getMechanismPosition().in(Radians),
                                                    currentVelocitySetpoint.in(RadiansPerSecond),
                                                    nextVelocitySetpoint.in(RadiansPerSecond)));
       } else
@@ -534,7 +533,7 @@ public abstract class SmartMotorController
                                                                     : setpointVelocity.orElse(RotationsPerSecond.zero())
                                                                                       .in(RotationsPerSecond);
         // Not profiled, so using current velocity or setpoint velocity.
-        ff.calculateWithVelocities(getMechanismPosition().in(Radians),
+        ff.calculate(getMechanismPosition().in(Radians),
                                    getMechanismVelocity().in(RadiansPerSecond),
                                    nextVelocitySetpoint);
       }
@@ -551,12 +550,12 @@ public abstract class SmartMotorController
             m_trapezoidProfile.isPresent() ? nextTrapState.get().velocity
                                            : (m_expoProfile.isPresent() ? nextExpoState.get().velocity : 0.0));
 
-        feedforward.set(ff.calculateWithVelocities(currentVelocitySetpoint.in(MetersPerSecond),
+        feedforward.set(ff.calculate(currentVelocitySetpoint.in(MetersPerSecond),
                                                    nextVelocitySetpoint.in(MetersPerSecond)));
       } else
       {
         // Not profiled, so using current velocity or setpoint velocity.
-        feedforward.set(ff.calculateWithVelocities(getMeasurementVelocity().in(MetersPerSecond), 0));
+        feedforward.set(ff.calculate(getMeasurementVelocity().in(MetersPerSecond), 0));
       }
     });
 
@@ -570,7 +569,7 @@ public abstract class SmartMotorController
         var nextVelocitySetpoint = RotationsPerSecond.of(
             m_trapezoidProfile.isPresent() ? nextTrapState.get().velocity
                                            : (m_expoProfile.isPresent() ? nextExpoState.get().velocity : 0.0));
-        feedforward.set(ff.calculateWithVelocities(currentVelocitySetpoint.in(RotationsPerSecond),
+        feedforward.set(ff.calculate(currentVelocitySetpoint.in(RotationsPerSecond),
                                                    nextVelocitySetpoint.in(RotationsPerSecond)));
 
       } else
@@ -580,7 +579,7 @@ public abstract class SmartMotorController
                                                                     : setpointVelocity.orElse(RotationsPerSecond.zero())
                                                                                       .in(RotationsPerSecond);
         // Not profiled, so using current velocity, or setpoint velocity.
-        feedforward.set(ff.calculateWithVelocities(getMechanismVelocity().in(RotationsPerSecond),
+        feedforward.set(ff.calculate(getMechanismVelocity().in(RotationsPerSecond),
                                                    nextVelocitySetpoint));
       }
     });
@@ -622,7 +621,7 @@ public abstract class SmartMotorController
     if (maximumVoltage.isPresent())
     {
       double maxVolts = maximumVoltage.get().in(Volts);
-      outputVoltage = MathUtil.clamp(outputVoltage, -maxVolts, maxVolts);
+      outputVoltage = Math.clamp(outputVoltage, -maxVolts, maxVolts);
     }
     setVoltage(Volts.of(outputVoltage));
   }
