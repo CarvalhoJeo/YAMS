@@ -3,7 +3,6 @@
 
 package yams.motorcontrollers;
 
-import static org.wpilib.hardware.hal.FRCNetComm.tResourceType.kResourceType_YAMS;
 import static org.wpilib.units.Units.Amps;
 import static org.wpilib.units.Units.KilogramSquareMeters;
 import static org.wpilib.units.Units.Kilograms;
@@ -19,13 +18,16 @@ import static org.wpilib.units.Units.Second;
 import static org.wpilib.units.Units.Volts;
 
 import org.wpilib.hardware.hal.HAL;
-import org.wpilib.math.Pair;
+import org.wpilib.hardware.hal.HALUtil;
+import org.wpilib.hardware.hal.HALValue;
+import org.wpilib.math.util.Pair;
 import org.wpilib.math.controller.ArmFeedforward;
 import org.wpilib.math.controller.ElevatorFeedforward;
 import org.wpilib.math.controller.PIDController;
 import org.wpilib.math.controller.SimpleMotorFeedforward;
-import org.wpilib.math.system.plant.DCMotor;
-import org.wpilib.math.system.plant.LinearSystemId;
+import org.wpilib.math.system.DCMotor;
+import org.wpilib.math.system.LinearSystem;
+import org.wpilib.math.system.Models;
 import org.wpilib.math.trajectory.ExponentialProfile;
 import org.wpilib.math.trajectory.TrapezoidProfile;
 import org.wpilib.math.trajectory.TrapezoidProfile.Constraints;
@@ -45,10 +47,13 @@ import org.wpilib.units.measure.Temperature;
 import org.wpilib.units.measure.Time;
 import org.wpilib.units.measure.Velocity;
 import org.wpilib.units.measure.Voltage;
-import org.wpilib.wpilibj.DriverStation;
-import org.wpilib.wpilibj.RobotBase;
 import org.wpilib.simulation.SingleJointedArmSim;
 import org.wpilib.command2.Subsystem;
+import org.wpilib.driverstation.DriverStation;
+import org.wpilib.driverstation.internal.DriverStationBackend;
+import org.wpilib.framework.RobotBase;
+
+
 import java.util.Arrays;
 import java.util.EnumMap;
 import java.util.EnumSet;
@@ -62,8 +67,10 @@ import yams.math.LQRController;
 import yams.mechanisms.config.ElevatorConfig;
 import yams.mechanisms.positional.Elevator;
 import yams.motorcontrollers.SmartMotorController.ClosedLoopControllerSlot;
+import yams.motorcontrollers.simulation.SensorData.HALValueType;
 import yams.telemetry.SmartMotorControllerTelemetryConfig;
-
+import org.wpilib.math.system.LinearSystem;
+import org.wpilib.hardware.hal.HALValue;
 /**
  * Smart motor controller config.
  *
@@ -326,7 +333,7 @@ public class SmartMotorControllerConfig {
    * @param subsystem {@link Subsystem} to use.
    */
   public SmartMotorControllerConfig(Subsystem subsystem) {
-    HAL.report(kResourceType_YAMS, 1);
+    HAL.reportUsage("YAMS", "1");
     this.subsystem = Optional.ofNullable(subsystem);
   }
 
@@ -337,7 +344,7 @@ public class SmartMotorControllerConfig {
    * SmartMotorController}
    */
   public SmartMotorControllerConfig() {
-    HAL.report(kResourceType_YAMS, 1);
+    HAL.reportUsage(null, null);
   }
 
   /**
@@ -423,60 +430,6 @@ public class SmartMotorControllerConfig {
    */
   public SmartMotorControllerConfig withVendorConfig(Object vendorConfig) {
     this.vendorConfig = Optional.ofNullable(vendorConfig);
-    return this;
-  }
-
-  /**
-   * Set the vendor specific control request for the {@link SmartMotorController} which will be used
-   * in place of default or calculated ones.
-   *
-   * @param vendorControlRequest Vendor specific control request for velocity or position.
-   * @return {@link SmartMotorControllerConfig} for chaining
-   */
-  public SmartMotorControllerConfig withVendorControlRequest(Object vendorControlRequest) {
-    this.vendorControlRequest = Optional.ofNullable(vendorControlRequest);
-    return this;
-  }
-
-  /**
-   * Sets the {@link Subsystem} for the {@link SmartMotorControllerConfig} to pass along to {@link
-   * SmartMotorController} and {@link yams.mechanisms.SmartMechanism}s. Must be set if a {@link
-   * Subsystem} was not defined previously.
-   *
-   * @param vendorControlRequest Vendor specific control request. Must be of the correct type for the
-   *                     {@link SmartMotorController}.
-   * @return {@link SmartMotorControllerConfig} for chaining.
-   * @implSpec Apply any changes after the {@link SmartMotorController} is created to ensure accuracy.
-   */
-  public SmartMotorControllerConfig withVendorPositionControlRequest(Object vendorControlRequest)
-  {
-    this.vendorPositionControlRequest = Optional.ofNullable(vendorConfig);
-    return this;
-  }
-
-  /**
-   * Set the vendor specific velocity control request for the {@link SmartMotorController} which will be used in closed loop velocity commands.
-   *
-   * @param vendorControlRequest Vendor specific control request. Must be of the correct type for the
-   *                     {@link SmartMotorController}.
-   * @return {@link SmartMotorControllerConfig} for chaining.
-   * @implSpec Apply any changes after the {@link SmartMotorController} is created to ensure accuracy.
-   */
-  public SmartMotorControllerConfig withVendorVelocityControlRequest(Object vendorControlRequest)
-  {
-    this.vendorVelocityControlRequest = Optional.ofNullable(vendorConfig);
-    return this;
-  }
-
-  /**
-   * Set the vendor specific control request for the {@link SmartMotorController} which will be used
-   * in place of default or calculated ones.
-   *
-   * @param vendorControlRequest Vendor specific control request for velocity or position.
-   * @return {@link SmartMotorControllerConfig} for chaining
-   */
-  public SmartMotorControllerConfig withVendorControlRequest(Object vendorControlRequest) {
-    this.vendorControlRequest = Optional.ofNullable(vendorControlRequest);
     return this;
   }
 
@@ -1503,10 +1456,10 @@ public class SmartMotorControllerConfig {
    * @return {@link SmartMotorControllerConfig} for chaining.
    */
   public SmartMotorControllerConfig withProfile(TrapezoidProfile.Constraints profile) {
-    DriverStation.reportWarning("Trapezoidal profile will be given rotations/s and rotations/s^2 "
+    DriverStationBackend.reportWarning("Trapezoidal profile will be given rotations/s and rotations/s^2 "
                                 + "for rotational closed loop controllers.",
         true);
-    DriverStation.reportWarning("Trapezoidal profile will be given meters/s and meters/s^2 for "
+    DriverStationBackend.reportWarning("Trapezoidal profile will be given meters/s and meters/s^2 for "
                                 + "linear closed loop controllers.",
         true);
     this.exponentialProfile = Optional.empty();
@@ -1588,10 +1541,10 @@ public class SmartMotorControllerConfig {
    * @return {@link SmartMotorControllerConfig} for chaining.
    */
   public SmartMotorControllerConfig withProfile(ExponentialProfile.Constraints profile) {
-    DriverStation.reportWarning("Exponential profile will be given rotations/s and rotations/s^2 "
+    DriverStationBackend.reportWarning("Exponential profile will be given rotations/s and rotations/s^2 "
                                 + "for rotational closed loop controllers.",
         true);
-    DriverStation.reportWarning("Exponential profile will be given meters/s and meters/s^2 for "
+    DriverStationBackend.reportWarning("Exponential profile will be given meters/s and meters/s^2 for "
                                 + "linear closed loop controllers.",
         true);
     this.exponentialProfile = Optional.ofNullable(profile);
@@ -1610,7 +1563,7 @@ public class SmartMotorControllerConfig {
   public SmartMotorControllerConfig withExponentialProfile(
       Voltage maxVolts, DCMotor motor, MomentOfInertia moi) {
     this.moi = moi;
-    var sysid = LinearSystemId.createSingleJointedArmSystem(
+    var sysid = Models.singleJointedArmFromPhysicalConstants(
         motor, moi.in(KilogramSquareMeters), gearing.getMechanismToRotorRatio());
     var A = sysid.getA(0, 0); // radians
     var B = sysid.getB(0, 0); // radians
@@ -1633,10 +1586,9 @@ public class SmartMotorControllerConfig {
    */
   public SmartMotorControllerConfig withExponentialProfile(
       Voltage maxVolts, DCMotor motor, Mass mass, Distance drumRadius) {
-    var sysid = LinearSystemId.createElevatorSystem(
+    var sysid = Models.elevatorFromPhysicalConstants(
         motor, mass.in(Kilograms), drumRadius.in(Meters), gearing.getMechanismToRotorRatio());
     var circumference = (2.0 * Math.PI * drumRadius.in(Meters));
-
     var A = sysid.getA(0, 0);
     var B = sysid.getB(0, 0);
     var kV = MetersPerSecond.of(-A / B);
@@ -2246,7 +2198,7 @@ public class SmartMotorControllerConfig {
   public SmartMotorControllerConfig withExternalEncoderGearing(
       MechanismGearing externalEncoderGearing) {
     if (externalEncoderGearing.getRotorToMechanismRatio() > 1) {
-      DriverStation.reportWarning("[IMPORTANT] Your gearing is set in a way that the external "
+      DriverStationBackend.reportWarning("[IMPORTANT] Your gearing is set in a way that the external "
                                   + "encoder will exceed the maximum reading, "
               + "this WILL result in multiple angle's being read as the same 'angle.\n\t"
               + "Ignore this warning IF your mechanism will never travel outside of the slice you "
@@ -2267,7 +2219,7 @@ public class SmartMotorControllerConfig {
    */
   public SmartMotorControllerConfig withExternalEncoderGearing(double reductionRatio) {
     if (reductionRatio > 1) {
-      DriverStation.reportWarning("[IMPORTANT] Your gearing is set in a way that the external "
+      DriverStationBackend.reportWarning("[IMPORTANT] Your gearing is set in a way that the external "
                                   + "encoder will exceed the maximum reading, "
               + "this WILL result in multiple angle's being read as the same 'angle.\n\t"
               + "Ignore this warning IF your mechanism will never travel outside of the slice you "
